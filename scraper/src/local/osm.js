@@ -1,11 +1,13 @@
 // Monthly OpenStreetMap comparison: places newly mapped (likely openings) and places that
 // vanished or got tagged as disused (likely closings), within each user area.
 import { overpassQuery, placeFromElement, fetchOverpass, FOOD_DRINK_KINDS } from '../../../shared/places.js';
-import { UA } from '../net.js';
+
+// Overpass asks API users to identify their app honestly (a browser-like agent gets HTTP 406).
+const OVERPASS_UA = 'Happenings/1.0 (+https://github.com/mendus59/Happenings)';
 
 export async function fetchOsmPlaces(area) {
   const query = overpassQuery({ bbox: [area.s, area.w, area.n, area.e], onlyFoodDrink: true, timeout: 90 });
-  const json = await fetchOverpass(query, { headers: { 'user-agent': UA }, timeoutMs: 120000, rounds: 3 });
+  const json = await fetchOverpass(query, { headers: { 'user-agent': OVERPASS_UA, accept: 'application/json' }, timeoutMs: 120000, rounds: 3 });
   return (json.elements || []).map(placeFromElement).filter((p) => p && FOOD_DRINK_KINDS.has(p.kind));
 }
 
