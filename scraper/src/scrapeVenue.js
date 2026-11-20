@@ -26,7 +26,7 @@ export async function scrapeVenue(browser, url, { venueId, log = console.log, no
   let eventsPageUrl = page.url;
 
   // Heuristic-only results on a homepage are weak; look for a real events page too.
-  const weak = raw.length === 0 || Object.keys(methods).every((m) => m === 'heuristic');
+  const weak = raw.length === 0 || Object.keys(methods).every((m) => m === 'heuristic' || m === 'captions');
   if (weak) {
     for (const link of findEventPageLinks(page.html, page.url)) {
       log(`  following likely events link: ${link}`);
@@ -35,7 +35,7 @@ export async function scrapeVenue(browser, url, { venueId, log = console.log, no
         const ctx2 = { url: p2.url, html: p2.html, frames: p2.frames, tz: DEFAULT_TZ, log };
         const r2 = await extractFromPage(ctx2);
         tried.push(p2.url);
-        const strong = Object.keys(r2.methods).some((m) => m !== 'heuristic');
+        const strong = Object.keys(r2.methods).some((m) => m !== 'heuristic' && m !== 'captions');
         if (r2.raw.length && (strong || raw.length === 0)) {
           raw = r2.raw;
           methods = r2.methods;
