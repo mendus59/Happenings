@@ -1,0 +1,63 @@
+rules_version = '2';
+
+// Happenings security rules.
+//  - venues/* and their events are written only by the scraper (Admin SDK bypasses rules)
+//    and are readable by any signed-in user (they mirror public websites).
+//  - Everything under users/{uid} is private to that user.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function isTimestampOrServerTime(v) {
+      return v is timestamp;
+    }
+
+    match /venues/{venueId} {
+      allow read: if signedIn();
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+    }
+
+    match /users/{uid} {
+      allow read, write: if false;
+
+      // Venues this user follows. Doc id = venue id derived from the URL.
+      match /subscriptions/{venueId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && venueId.matches('v_[0-9a-f]{20}')
+          && request.resource.data.keys().hasOnly(['url', 'label', 'addedAt', 'scanRequestedAt'])
+          && request.resource.data.url is string
+          && request.resource.data.url.size() <= 2048
+          && request.resource.data.url.matches('https?://.+')
+          && (!('label' in request.resource.data) || (request.resource.data.label is string && request.resource.data.label.size() <= 100))
+          && (!('addedAt' in request.resource.data) || isTimestampOrServerTime(request.resource.data.addedAt))
+          && (!('scanRequestedAt' in request.resource.data) || isTimestampOrServerTime(request.resource.data.scanRequestedAt));
+      }
+
+      // This user's review state for an event. Doc id = `${venueId}__${eventId}`.
+      match /reviews/{reviewId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && reviewId.size() <= 80
+          && request.resource.data.keys().hasOnly(['state', 'venueId', 'eventId', 'updatedAt'])
+          && request.resource.data.state in ['interested', 'favorite', 'hidden']
+          && request.resource.data.venueId is string && request.resource.data.venueId.size() <= 40
+          && request.resource.data.eventId is string && request.resource.data.eventId.size() <= 40;
+      }
+    }
+
+    // Deny everything else.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

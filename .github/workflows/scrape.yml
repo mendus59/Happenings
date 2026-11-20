@@ -1,0 +1,66 @@
+name: Sync venue events
+
+on:
+  schedule:
+    # Hourly. Each venue is only re-read every SCRAPE_INTERVAL_HOURS (or sooner when
+    # someone adds it or presses "Check again"), so most runs finish in seconds.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rescan every venue now, ignoring the schedule
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # lets the keepalive step re-enable this schedule
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      SCRAPE_INTERVAL_HOURS: '6'
+      DEFAULT_TZ: America/Los_Angeles
+    steps:
+      - name: Check for the Firebase secret
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::warning::Add the FIREBASE_SERVICE_ACCOUNT repository secret to enable syncing (see README)."
+      - uses: actions/checkout@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - uses: actions/setup-node@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npm ci
+      - name: Cache Playwright browser
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
+      - if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npx playwright install --with-deps chromium
+      - name: Scrape due venues and sync to Firestore
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: node scraper/src/index.js ${{ inputs.force && '--force' || '' }}
+
+      # GitHub pauses scheduled workflows in repos with no activity for 60 days.
+      # Re-enabling it once a week keeps the sync running without commits.
+      - name: Keep the schedule alive
+        if: github.event_name == 'schedule' && github.event.schedule == '17 * * * *'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(date -u +%u%H)" = "103" ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scrape.yml/enable" || true
+          fi

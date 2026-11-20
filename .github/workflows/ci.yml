@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Firestore security rules tests (emulator)
+        run: npx --yes firebase-tools@13.24.1 emulators:exec --only firestore --project happenings-rules-test "node --test test/rules.test.js"
+      - name: Build web app
+        run: npm run build
+
+  live-scrape:
+    # Scrapes the real example venues without touching Firestore. A venue redesigning
+    # its site shouldn't block merges, so this is informational.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Dry-run scrape of example venues
+        run: >
+          node scraper/src/index.js --dry-run --out scrape-report.json
+          --url https://www.finnriver.com/farm-music-event-calendar
+          --url https://www.mushroom-wonderland.com/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scrape-report
+          path: scrape-report.json

@@ -1,0 +1,31 @@
+{
+  "name": "happenings",
+  "private": true,
+  "type": "module",
+  "description": "Keep up with events at the small venues you love.",
+  "scripts": {
+    "build": "node web/build.js",
+    "dev": "node web/build.js --watch",
+    "scrape": "node scraper/src/index.js",
+    "scrape:dry": "node scraper/src/index.js --dry-run",
+    "test": "node --test \"shared/**/*.test.js\" \"scraper/test/**/*.test.js\"",
+    "test:rules": "npx --yes firebase-tools@13.24.1 emulators:exec --only firestore --project happenings-rules-test \"node --test test/rules.test.js\"",
+    "emulators": "npx --yes firebase-tools@13.24.1 emulators:start --only auth,firestore --project happenings-79a0e",
+    "seed": "node scripts/seed-emulator.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cheerio": "1.0.0",
+    "chrono-node": "2.7.7",
+    "firebase-admin": "12.7.0",
+    "node-ical": "0.20.1",
+    "playwright": "1.48.2"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "esbuild": "0.24.0",
+    "firebase": "11.0.2"
+  }
+}
