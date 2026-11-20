@@ -33,6 +33,10 @@ export function kindFromTags(t = {}) {
   return null;
 }
 
+/** Kinds shown in the Restaurants tab rather than Nearby. */
+export const RESTAURANT_KINDS = new Set(['restaurant', 'cafe', 'bakery']);
+export const NEARBY_KINDS = Object.keys(PLACE_KINDS).filter((k) => !RESTAURANT_KINDS.has(k));
+
 /** OSM "food & drink" kinds tracked for openings/closings. */
 export const FOOD_DRINK_KINDS = new Set(['restaurant', 'cafe', 'bakery', 'bar', 'brewery']);
 

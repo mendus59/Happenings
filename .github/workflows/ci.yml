@@ -45,6 +45,10 @@ jobs:
           --url https://www.mushroom-wonderland.com/
       - name: Dry-run nearby openings check (Kitsap / Port Orchard area)
         run: node scraper/src/local/index.js --dry-run --box 47.40,-122.80,47.80,-122.45
+      - name: Dry-run restaurant menus (downtown Port Orchard, plus two known sites)
+        run: >
+          node scraper/src/restaurants/index.js --dry-run --box 47.52,-122.66,47.56,-122.60 --limit 8
+          --url https://www.bainbridgethai.com/ --url https://islabonitarestaurant.com/
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -4,6 +4,7 @@
 //   node scraper/src/local/index.js --dry-run --box 47.40,-122.80,47.80,-122.45   (south,west,north,east)
 import { parseArgs } from 'node:util';
 import { areaFor, inBox, profileBox } from '../../../shared/geo.js';
+import { areasForBoxes, MODE_IDS } from '../../../shared/restaurants.js';
 import { fetchLcbOpenings } from './licenses.js';
 import { fetchOsmPlaces, diffOsm, snapshotOf } from './osm.js';
 
@@ -40,13 +41,16 @@ async function run() {
   initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
   const db = getFirestore();
 
-  // Areas people have set up.
-  const users = await db.collection('users').get();
-  const areas = new Map();
-  for (const u of users.docs) {
-    const a = areaFor(profileBox(u.data()));
-    if (a) areas.set(a.id, a);
+  // Areas people have set up: their home box plus their restaurant boxes (deduplicated
+  // the same way the web app does, so both agree on area ids).
+  const boxesByUser = new Map();
+  const add = (uid, b) => b && (boxesByUser.get(uid) || boxesByUser.set(uid, []).get(uid)).push(b);
+  for (const u of (await db.collection('users').get()).docs) add(u.id, profileBox(u.data()));
+  for (const d of (await db.collectionGroup('restaurantAreas').get()).docs) {
+    if (MODE_IDS.includes(d.id)) add(d.ref.parent.parent.id, d.data());
   }
+  const areas = new Map();
+  for (const boxes of boxesByUser.values()) for (const a of areasForBoxes(boxes)) areas.set(a.id, a);
   log(`${areas.size} areas`);
   if (!areas.size) return;
 

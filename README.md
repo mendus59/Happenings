@@ -75,6 +75,17 @@ The **Nearby** tab lets each person draw a box on the map around the places they
 - **Closings**: there is no free closure registry, so closings come from three signals: a "we're closing" notice on a tracked venue's own site, a tracked site that has been unreachable for several days, and places that disappear from or are marked closed on OpenStreetMap (compared every 28 days).
 - **Suggestions** (opt in): places with websites inside the box, ranked by how much they resemble the venues and events you already track.
 
+## Restaurants
+
+The **Restaurants** tab has its own three map boxes: **dine-in**, **takeout** and **delivery**. Each restaurant can be marked favorite or disliked separately for each of the three, and restaurants with no rating are flagged "Unrated". You can filter by way of eating, cuisine, price, menus, and favorites or dislikes (for example, only takeout favorites, or hide anything disliked for delivery). Search covers restaurant names, cuisines and **dishes on their menus**.
+
+Everything is free:
+
+- **Restaurant list**: OpenStreetMap, which also provides cuisine and, where mapped, whether a place offers takeout or delivery. Refreshed weekly by `.github/workflows/restaurants.yml`.
+- **Menus**: read from each restaurant's **own website**, about once a month per restaurant. The job uses schema.org menu data, common menu widgets (Squarespace, BentoBox, Popmenu and similar), plain-text menus, and PDF menus. It can't read menus that are images. Prices come from these menus, so "$–$$$$" is an estimate.
+- **Ordering links**: DoorDash, Grubhub, Uber Eats, Toast, Square and other ordering links found on the restaurant's site. A link to a delivery app also marks the restaurant as offering delivery. The delivery apps have no free way to read their listings or menus, so for other restaurants the app shows "Look for it on DoorDash / Grubhub / Uber Eats" search links.
+- **New and closing restaurants**: the same daily license and map checks as Nearby, plus closing notices on a restaurant's own website.
+
 ## Free-tier budget
 
 | Service | Free limit | Typical use |
@@ -85,7 +96,9 @@ The **Nearby** tab lets each person draw a box on the map around the places they
 | Firebase Auth | 50k monthly active users | |
 
 The scraper only writes when something actually changed, scans at most 60 venues per run, and
-re-reads each venue every 6 hours (`SCRAPE_INTERVAL_HOURS` in `scrape.yml`).
+re-reads each venue every 6 hours (`SCRAPE_INTERVAL_HOURS` in `scrape.yml`). Restaurant lists
+are stored a few hundred restaurants per document, so opening the Restaurants tab costs only a
+handful of reads. The restaurants job visits at most 120 websites per night (`MENU_BUDGET`).
 
 ## Development
 

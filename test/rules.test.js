@@ -94,6 +94,35 @@ test('area changes are readable when signed in, never writable', async () => {
   await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(), 'areas', 'a_1', 'changes')));
 });
 
+test('restaurant boxes and ratings are private and validated', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  const bob = env.authenticatedContext('bob').firestore();
+  const box = { s: 47.5, w: -122.7, n: 47.58, e: -122.58, updatedAt: serverTimestamp() };
+  const area = (db, mode) => doc(db, 'users', 'alice', 'restaurantAreas', mode);
+  await assertSucceeds(setDoc(area(alice, 'takeout'), box));
+  await assertSucceeds(getDoc(area(alice, 'takeout')));
+  await assertFails(getDoc(area(bob, 'takeout')));
+  await assertFails(setDoc(area(alice, 'picnic'), box));
+  await assertFails(setDoc(area(alice, 'dine'), { ...box, n: 49.5 }));
+  await assertFails(setDoc(area(alice, 'dine'), { s: 47.5, w: -122.7 }));
+  await assertFails(setDoc(area(alice, 'dine'), { ...box, extra: 1 }));
+  const rating = (db) => doc(db, 'users', 'alice', 'restaurantRatings', 'r_node_42');
+  await assertSucceeds(setDoc(rating(alice), { dine: 'fav', delivery: 'dislike', name: 'Thai Place', updatedAt: serverTimestamp() }));
+  await assertSucceeds(getDocs(collection(alice, 'users', 'alice', 'restaurantRatings')));
+  await assertFails(getDoc(rating(bob)));
+  await assertFails(setDoc(rating(bob), { dine: 'fav' }));
+  await assertFails(setDoc(rating(alice), { dine: 'love' }));
+  await assertFails(setDoc(doc(alice, 'users', 'alice', 'restaurantRatings', 'not-an-id'), { dine: 'fav' }));
+});
+
+test('shared restaurant lists are readable when signed in, never writable', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  await assertSucceeds(getDocs(collection(alice, 'rareas', 'a_1', 'chunks')));
+  await assertSucceeds(getDoc(doc(alice, 'rareas', 'a_1')));
+  await assertFails(setDoc(doc(alice, 'rareas', 'a_1', 'chunks', '0'), { list: [] }));
+  await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(), 'rareas', 'a_1', 'chunks')));
+});
+
 test('unknown collections are closed', async () => {
   const alice = env.authenticatedContext('alice').firestore();
   await assertFails(setDoc(doc(alice, 'users', 'alice'), { x: 1 }));

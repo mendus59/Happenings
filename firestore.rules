@@ -46,6 +46,16 @@ service cloud.firestore {
       }
     }
 
+    // Restaurants inside each shared area (with menus), written by the daily restaurants job.
+    match /rareas/{areaId} {
+      allow read: if signedIn();
+      allow write: if false;
+      match /chunks/{chunkId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+    }
+
     match /users/{uid} {
       // Profile: home area as a map rectangle (edges rounded to ~1 km) and preferences.
       allow read, delete: if isOwner(uid);
@@ -67,6 +77,31 @@ service cloud.firestore {
           && (!('label' in request.resource.data) || (request.resource.data.label is string && request.resource.data.label.size() <= 100))
           && (!('addedAt' in request.resource.data) || isTimestampOrServerTime(request.resource.data.addedAt))
           && (!('scanRequestedAt' in request.resource.data) || isTimestampOrServerTime(request.resource.data.scanRequestedAt));
+      }
+
+      // Restaurant boxes: one per way of eating. Doc id = dine | takeout | delivery.
+      match /restaurantAreas/{mode} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && mode in ['dine', 'takeout', 'delivery']
+          && request.resource.data.keys().hasOnly(['s', 'w', 'n', 'e', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['s', 'w', 'n', 'e'])
+          && validBox({
+            'boxS': request.resource.data.s, 'boxW': request.resource.data.w,
+            'boxN': request.resource.data.n, 'boxE': request.resource.data.e,
+          });
+      }
+
+      // Favorite / disliked per way of eating. Doc id = restaurant id (r_node_123).
+      match /restaurantRatings/{rid} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && rid.matches('r_(node|way|relation)_[0-9]{1,15}')
+          && request.resource.data.keys().hasOnly(['dine', 'takeout', 'delivery', 'name', 'updatedAt'])
+          && (!('dine' in request.resource.data) || request.resource.data.dine in ['fav', 'dislike'])
+          && (!('takeout' in request.resource.data) || request.resource.data.takeout in ['fav', 'dislike'])
+          && (!('delivery' in request.resource.data) || request.resource.data.delivery in ['fav', 'dislike'])
+          && (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 120));
       }
 
       // This user's review state for an event. Doc id = `${venueId}__${eventId}`.
