@@ -2,8 +2,9 @@
 // and opt-in suggestions. Map data comes from OpenStreetMap (free).
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { PLACE_KINDS, overpassQuery, placeFromElement, fetchOverpass } from '../../shared/places.js';
-import { MAX_BOX, boxAround, boxCenter, boxSizeKm, distanceKm, inBox, normalizeBox, profileBox, siteKey } from '../../shared/geo.js';
+import { PLACE_KINDS, NEARBY_KINDS, RESTAURANT_KINDS, overpassQuery, placeFromElement, fetchOverpass } from '../../shared/places.js';
+import { boxAround, boxCenter, distanceKm, inBox, normalizeBox, profileBox, siteKey } from '../../shared/geo.js';
+import { createBoxEditor, toBounds, sizeText } from './boxEditor.js';
 import { esc, safeHref, loadPref, savePref } from './util.js';
 
 const KM_PER_MI = 1.609344;
@@ -11,14 +12,13 @@ const GREEN = '#2f6b4f';
 const nb = {
   map: null,
   layer: null,
-  rect: null, // the home-area rectangle on the map
-  handles: [], // drag handles while editing
+  editor: null, // the home-area rectangle on the map
   draft: null, // { box, label } while the user is drawing their area
   fitPending: false,
   places: new Map(), // id -> place (everything fetched so far)
   fetchedBoxes: [],
   loadingPlaces: false,
-  kinds: new Set(loadPref('nearbyKinds', Object.keys(PLACE_KINDS))),
+  kinds: new Set(loadPref('nearbyKinds', NEARBY_KINDS).filter((k) => NEARBY_KINDS.includes(k))),
   suggestions: null, // { key, list }
   suggesting: false,
   dismissed: new Set(loadPref('dismissedSuggestions', [])),
@@ -104,15 +104,11 @@ export function renderNearby(ctx) {
 }
 
 export function leaveNearby($app) {
-  if ($app.dataset.page === 'nearby') teardownMap();
+  if ($app.dataset.page !== 'nearby') return;
+  teardownMap();
   delete $app.dataset.page;
   delete $app.dataset.home;
 }
-
-const sizeText = (b) => {
-  const { tall, wide } = boxSizeKm(b);
-  return `About ${Math.round(wide / KM_PER_MI)} × ${Math.round(tall / KM_PER_MI)} miles`;
-};
 
 const msgHtml = () => (nb.formMsg ? `<div class="notice ${nb.formMsg.startsWith('!') ? 'error' : ''}">${esc(nb.formMsg.replace(/^!/, ''))}</div>` : '');
 
@@ -177,6 +173,7 @@ function renderKinds() {
   const el = document.getElementById('nb-kinds');
   if (!el) return;
   el.innerHTML = Object.entries(PLACE_KINDS)
+    .filter(([id]) => NEARBY_KINDS.includes(id))
     .map(
       ([id, k]) =>
         `<button class="chip ${nb.kinds.has(id) ? 'on' : ''}" style="--hue:${k.hue}" data-action="nb-kind" data-kind="${id}" aria-pressed="${nb.kinds.has(id)}">${k.icon} ${esc(k.label)}</button>`,
@@ -222,18 +219,19 @@ function renderChanges({ state }) {
   const changes = state.areaChanges.filter((c) => {
     const t = c.date ? Date.parse(c.date) : c.detectedAt?.getTime() || 0;
     // The shared area is a little larger than this user's box; trim to their box.
-    return t >= cutoff && (c.lat == null || inBox(box, c));
+    return t >= cutoff && !RESTAURANT_KINDS.has(c.kind) && (c.lat == null || inBox(box, c));
   });
   changes.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const all = [...venueAlerts, ...changes];
   const shown = nb.showAllChanges ? all : all.slice(0, 8);
   el.innerHTML = `
     <h3>Openings &amp; closings</h3>
+    <p class="hint">Bars, breweries, venues, and the places you track. New and closing restaurants are on the <button class="link" data-action="view" data-view="restaurants">Restaurants</button> tab.</p>
     ${
       all.length
         ? `<ul class="changes">${shown.map((c) => (c.id.startsWith('v_') ? venueAlert(c) : changeItem(state, c, tracked))).join('')}</ul>
            ${all.length > shown.length ? `<button class="link" data-action="nb-more">Show all ${all.length}</button>` : ''}`
-        : `<p class="hint">Nothing yet. Happenings checks Washington liquor-license notices daily (new restaurants, bars, breweries) and compares the map monthly. Your first results usually appear within a day.</p>`
+        : `<p class="hint">Nothing yet. Happenings checks Washington liquor-license notices daily and compares the map monthly. Your first results usually appear within a day.</p>`
     }`;
 }
 
@@ -298,7 +296,7 @@ function rankSuggestions(state, list) {
   const mid = boxCenter(box);
   // Everything in the box is somewhere the user chose to go, so distance only breaks ties.
   return list
-    .filter((p) => inBox(box, p) && !tracked.has(siteKey(p.website)) && !nb.dismissed.has(p.id))
+    .filter((p) => inBox(box, p) && !RESTAURANT_KINDS.has(p.kind) && !tracked.has(siteKey(p.website)) && !nb.dismissed.has(p.id))
     .map((p) => ({ ...p, score: (weights.get(p.kind) || 0) / (1 + distanceKm(mid, p) / 50) }))
     .filter((p) => p.score > 0)
     .sort((a, b) => b.score - a.score)
@@ -367,102 +365,34 @@ function setupMap(ctx) {
   loadPlacesInView();
 }
 
-const toBounds = (b) => L.latLngBounds([b.s, b.w], [b.n, b.e]);
-
 function teardownMap() {
   nb.map?.remove();
   nb.map = null;
   nb.layer = null;
-  nb.rect = null;
-  nb.handles = [];
-  nb.handleMap = null;
+  nb.editor = null;
   nb.markers = null;
 }
 
-/** Draw the home-area rectangle; while editing, add corner and move handles. */
+/** Draw the home-area rectangle; while editing, it gets corner and move handles. */
 function drawBox() {
   const map = nb.map;
   if (!map) return;
   const editing = !!nb.draft;
   const b = editing ? nb.draft.box : savedBox(nb.ctx.state);
   if (!b) return;
-  const style = editing
-    ? { color: GREEN, weight: 3, dashArray: '6 6', fillOpacity: 0.08, interactive: false }
-    : { color: GREEN, weight: 2, fillOpacity: 0.03, interactive: false };
-  if (!nb.rect) nb.rect = L.rectangle(toBounds(b), style).addTo(map);
-  else {
-    nb.rect.setBounds(toBounds(b));
-    nb.rect.setStyle(style);
-  }
+  nb.editor ||= createBoxEditor(map, {
+    onChange: (box) => {
+      if (!nb.draft) return;
+      nb.draft.box = box;
+      const size = document.getElementById('nb-size');
+      if (size) size.textContent = sizeText(normalizeBox(box) || box);
+    },
+  });
+  nb.editor.set(b).edit(editing);
   if (nb.fitPending) {
     nb.fitPending = false;
     map.fitBounds(toBounds(b), { padding: [30, 30] });
   }
-  if (!editing) {
-    for (const h of nb.handles) h.remove();
-    nb.handles = [];
-    nb.handleMap = null;
-    return;
-  }
-  if (!nb.handles.length) {
-    const corner = (name) =>
-      L.marker([0, 0], {
-        draggable: true,
-        keyboard: false,
-        icon: L.divIcon({ className: `nb-handle nb-${name}`, iconSize: [18, 18] }),
-        title: 'Drag to resize your area',
-      });
-    const move = L.marker([0, 0], {
-      draggable: true,
-      keyboard: false,
-      icon: L.divIcon({ className: 'nb-handle nb-move', html: '✥', iconSize: [26, 26] }),
-      title: 'Drag to move your area',
-    });
-    const handles = { sw: corner('sw'), nw: corner('nw'), ne: corner('ne'), se: corner('se'), move };
-    for (const [name, m] of Object.entries(handles)) {
-      let start = null;
-      m.on('dragstart', () => {
-        start = { ...nb.draft.box, at: m.getLatLng() };
-      });
-      m.on('drag', () => {
-        const ll = m.getLatLng();
-        const next = { ...nb.draft.box };
-        if (name === 'move') {
-          const dLat = ll.lat - start.at.lat;
-          const dLon = ll.lng - start.at.lng;
-          Object.assign(next, { s: start.s + dLat, n: start.n + dLat, w: start.w + dLon, e: start.e + dLon });
-        } else {
-          if (name[0] === 's') next.s = Math.max(ll.lat, start.n - MAX_BOX.lat);
-          else next.n = Math.min(ll.lat, start.s + MAX_BOX.lat);
-          if (name[1] === 'w') next.w = Math.max(ll.lng, start.e - MAX_BOX.lon);
-          else next.e = Math.min(ll.lng, start.w + MAX_BOX.lon);
-        }
-        nb.draft.box = next;
-        placeHandles(m);
-      });
-      m.on('dragend', () => {
-        const b2 = nb.draft.box;
-        // Corners may have been dragged past each other; put the edges back in order.
-        nb.draft.box = { s: Math.min(b2.s, b2.n), n: Math.max(b2.s, b2.n), w: Math.min(b2.w, b2.e), e: Math.max(b2.w, b2.e) };
-        placeHandles();
-      });
-      m.addTo(map);
-    }
-    nb.handles = Object.values(handles);
-    nb.handleMap = handles;
-  }
-  placeHandles();
-}
-
-function placeHandles(skip) {
-  const b = nb.draft?.box;
-  if (!b || !nb.handleMap) return;
-  const h = nb.handleMap;
-  const pos = { sw: [b.s, b.w], nw: [b.n, b.w], ne: [b.n, b.e], se: [b.s, b.e], move: [(b.s + b.n) / 2, (b.w + b.e) / 2] };
-  for (const [name, m] of Object.entries(h)) if (m !== skip) m.setLatLng(pos[name]);
-  nb.rect?.setBounds(toBounds(b));
-  const size = document.getElementById('nb-size');
-  if (size) size.textContent = sizeText(normalizeBox(b) || b);
 }
 
 function covered(b) {

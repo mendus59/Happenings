@@ -1,0 +1,34 @@
+name: Restaurants and menus
+
+on:
+  schedule:
+    # Daily at ~3:20 AM Pacific. Each restaurant's menu is re-read about monthly; the map
+    # list of restaurants is refreshed weekly.
+    - cron: '20 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restaurants
+  cancel-in-progress: false
+
+jobs:
+  restaurants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - name: Update restaurants, menus and ordering links
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: node scraper/src/restaurants/index.js

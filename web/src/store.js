@@ -14,7 +14,8 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase.js';
 import { normalizeVenueUrl, venueIdFor } from '../../shared/url.js';
-import { areaFor, normalizeBox, profileBox } from '../../shared/geo.js';
+import { normalizeBox, profileBox } from '../../shared/geo.js';
+import { areasForBoxes, MODE_IDS, RATINGS } from '../../shared/restaurants.js';
 
 export const REVIEW_STATES = ['interested', 'favorite', 'hidden'];
 
@@ -26,32 +27,96 @@ export function createStore(uid, onChange) {
     events: new Map(), // venueId -> Map(eventId -> event)
     reviews: new Map(), // `${venueId}__${eventId}` -> state
     profile: null, // { homeLabel, boxS, boxW, boxN, boxE, suggestions }
-    area: null,
-    areaChanges: [],
+    areaChanges: [], // openings & closings across the user's home and restaurant areas
+    rBoxes: new Map(), // mode -> {s,w,n,e}
+    rRatings: new Map(), // restaurantId -> {dine, takeout, delivery}
+    rAreas: new Map(), // areaId -> area doc (null until the job has filled it)
+    restaurants: new Map(), // restaurantId -> restaurant (merged across areas)
+    rLoaded: false,
     error: null,
   };
   const venueUnsubs = new Map();
-  let pending = 3;
-  let areaUnsub = null;
-  let areaId = null;
-  function watchArea() {
-    const p = state.profile;
-    const next = areaFor(profileBox(p));
-    if ((next?.id || null) === areaId) return;
-    areaUnsub?.();
-    areaUnsub = null;
-    areaId = next?.id || null;
-    state.area = next;
-    state.areaChanges = [];
-    if (!next) return;
-    areaUnsub = onSnapshot(
-      query(collection(db, 'areas', next.id, 'changes'), orderBy('detectedAt', 'desc'), limit(300)),
-      (snap) => {
-        state.areaChanges = snap.docs.map((d) => ({ id: d.id, ...d.data(), detectedAt: d.data().detectedAt?.toDate?.() || null }));
-        changed();
-      },
-      fail,
-    );
+  let pending = 5;
+  // Openings & closings: one listener per shared area.
+  const changeUnsubs = new Map(); // areaId -> unsub
+  const changesByArea = new Map(); // areaId -> list
+  function mergeChanges() {
+    const byId = new Map();
+    for (const list of changesByArea.values()) for (const c of list) byId.set(c.id, c);
+    state.areaChanges = [...byId.values()].sort((a, b) => (b.detectedAt?.getTime() || 0) - (a.detectedAt?.getTime() || 0));
+    changed();
+  }
+  function watchChanges() {
+    const boxes = [profileBox(state.profile), ...state.rBoxes.values()].filter(Boolean);
+    const ids = new Set(areasForBoxes(boxes).map((a) => a.id));
+    for (const [id, u] of changeUnsubs) {
+      if (ids.has(id)) continue;
+      u();
+      changeUnsubs.delete(id);
+      changesByArea.delete(id);
+    }
+    for (const id of ids) {
+      if (changeUnsubs.has(id)) continue;
+      changeUnsubs.set(
+        id,
+        onSnapshot(
+          query(collection(db, 'areas', id, 'changes'), orderBy('detectedAt', 'desc'), limit(300)),
+          (snap) => {
+            changesByArea.set(id, snap.docs.map((d) => ({ id: d.id, ...d.data(), detectedAt: d.data().detectedAt?.toDate?.() || null })));
+            mergeChanges();
+          },
+          fail,
+        ),
+      );
+    }
+    if (changeUnsubs.size !== changesByArea.size) mergeChanges();
+  }
+
+  // Restaurants: each shared area's list is split over a few "chunk" documents.
+  const rUnsubs = new Map(); // areaId -> unsub
+  const rByArea = new Map(); // areaId -> Map(chunkId -> list)
+  function mergeRestaurants() {
+    const m = new Map();
+    for (const chunks of rByArea.values()) for (const list of chunks.values()) for (const r of list) m.set(r.id, r);
+    state.restaurants = m;
+    state.rLoaded = [...state.rAreas.keys()].every((id) => rByArea.has(id));
+    changed();
+  }
+  function watchRestaurants() {
+    const areas = areasForBoxes([...state.rBoxes.values()]);
+    const ids = new Set(areas.map((a) => a.id));
+    for (const [id, u] of rUnsubs) {
+      if (ids.has(id)) continue;
+      u();
+      rUnsubs.delete(id);
+      rByArea.delete(id);
+      state.rAreas.delete(id);
+    }
+    for (const a of areas) {
+      if (rUnsubs.has(a.id)) continue;
+      state.rAreas.set(a.id, null);
+      const u1 = onSnapshot(
+        doc(db, 'rareas', a.id),
+        (snap) => {
+          state.rAreas.set(a.id, snap.exists() ? { id: a.id, ...snap.data(), updatedAt: snap.data().updatedAt?.toDate?.() || null } : null);
+          changed();
+        },
+        fail,
+      );
+      const u2 = onSnapshot(
+        collection(db, 'rareas', a.id, 'chunks'),
+        (snap) => {
+          rByArea.set(a.id, new Map(snap.docs.map((d) => [d.id, d.data().list || []])));
+          mergeRestaurants();
+        },
+        fail,
+      );
+      rUnsubs.set(a.id, () => {
+        u1();
+        u2();
+      });
+    }
+    mergeRestaurants();
   }
   const ready = () => {
     if (pending > 0 && --pending === 0) state.loading = false;
@@ -133,7 +198,7 @@ export function createStore(uid, onChange) {
     doc(db, 'users', uid),
     (snap) => {
       state.profile = snap.exists() ? snap.data() : null;
-      watchArea();
+      watchChanges();
       ready();
       changed();
     },
@@ -144,6 +209,33 @@ export function createStore(uid, onChange) {
     collection(db, 'users', uid, 'reviews'),
     (snap) => {
       state.reviews = new Map(snap.docs.map((d) => [d.id, d.data().state]));
+      ready();
+      changed();
+    },
+    fail,
+  );
+
+  const unsubRBoxes = onSnapshot(
+    collection(db, 'users', uid, 'restaurantAreas'),
+    (snap) => {
+      state.rBoxes = new Map(
+        snap.docs.filter((d) => MODE_IDS.includes(d.id)).map((d) => {
+          const { s, w, n, e } = d.data();
+          return [d.id, { s, w, n, e }];
+        }),
+      );
+      watchChanges();
+      watchRestaurants();
+      ready();
+      changed();
+    },
+    fail,
+  );
+
+  const unsubRRatings = onSnapshot(
+    collection(db, 'users', uid, 'restaurantRatings'),
+    (snap) => {
+      state.rRatings = new Map(snap.docs.map((d) => [d.id, d.data()]));
       ready();
       changed();
     },
@@ -199,12 +291,43 @@ export function createStore(uid, onChange) {
       if (suggestions !== undefined) data.suggestions = !!suggestions;
       await setDoc(doc(db, 'users', uid), data, { merge: true });
     },
+    /** Save the dine / takeout / delivery boxes ({mode: box}). */
+    async saveRestaurantBoxes(boxes) {
+      for (const [mode, box] of Object.entries(boxes)) {
+        if (!MODE_IDS.includes(mode)) continue;
+        const b = normalizeBox(box);
+        if (!b) throw new Error(`The ${mode} area is too small. Drag its corners out a bit.`);
+        await setDoc(doc(db, 'users', uid, 'restaurantAreas', mode), { ...b, updatedAt: serverTimestamp() });
+      }
+    },
+    /** Toggle favorite / disliked for one way of eating at a restaurant. */
+    async rateRestaurant(r, mode, rating) {
+      if (!MODE_IDS.includes(mode) || (rating && !RATINGS.includes(rating))) return;
+      const ref = doc(db, 'users', uid, 'restaurantRatings', r.id);
+      const cur = { ...(state.rRatings.get(r.id) || {}) };
+      delete cur.updatedAt;
+      if (!rating || cur[mode] === rating) delete cur[mode];
+      else cur[mode] = rating;
+      const has = MODE_IDS.some((m) => cur[m]);
+      if (has) state.rRatings.set(r.id, cur);
+      else state.rRatings.delete(r.id);
+      changed();
+      if (!has) await deleteDoc(ref);
+      else {
+        const data = { name: String(r.name || '').slice(0, 120), updatedAt: serverTimestamp() };
+        for (const m of MODE_IDS) if (cur[m]) data[m] = cur[m];
+        await setDoc(ref, data);
+      }
+    },
     async clearHome() {
       await deleteDoc(doc(db, 'users', uid));
     },
     stop() {
       unsubProfile();
-      areaUnsub?.();
+      unsubRBoxes();
+      unsubRRatings();
+      for (const u of changeUnsubs.values()) u();
+      for (const u of rUnsubs.values()) u();
       unsubSubs();
       unsubReviews();
       for (const u of venueUnsubs.values()) u();

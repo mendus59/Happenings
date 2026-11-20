@@ -10,6 +10,7 @@ import {
 import { auth } from './firebase.js';
 import { createStore } from './store.js';
 import { renderNearby, leaveNearby, handleNearbyAction, handleNearbySubmit, handleNearbyChange } from './nearby.js';
+import { renderRestaurants, leaveRestaurants, handleRestaurantAction, handleRestaurantSubmit, handleRestaurantChange, handleRestaurantInput } from './restaurants.js';
 import { CATEGORY_INFO, categoryInfo } from '../../shared/categories.js';
 import {
   esc,
@@ -33,7 +34,7 @@ const $user = document.getElementById('user');
 const $dialog = document.getElementById('event-dialog');
 
 const ui = {
-  view: loadPref('view', 'list'), // list | calendar | venues | nearby
+  view: loadPref('view', 'list'), // list | calendar | venues | nearby | restaurants
   status: loadPref('status', 'active'), // review | active | interested | favorite | hidden
   categories: new Set(loadPref('categories', [])),
   venue: loadPref('venue', ''),
@@ -120,7 +121,9 @@ function sorted(events) {
 // ---------- rendering ----------
 
 function render() {
-  if (!user || ui.view !== 'nearby' || store?.state.error || store?.state.loading) leaveNearby($app);
+  const busy = !user || store?.state.error || store?.state.loading;
+  if (busy || ui.view !== 'nearby') leaveNearby($app);
+  if (busy || ui.view !== 'restaurants') leaveRestaurants($app);
   if (!user) return renderAuth();
   const state = store.state;
   const events = allEvents(state);
@@ -133,6 +136,7 @@ function render() {
     ['calendar', 'Calendar'],
     ['venues', 'Venues'],
     ['nearby', 'Nearby'],
+    ['restaurants', 'Restaurants'],
   ]
     .map(
       ([id, label]) =>
@@ -152,6 +156,7 @@ function render() {
     return;
   }
   if (ui.view === 'nearby') return renderNearby({ state, store, $app, rerender: render });
+  if (ui.view === 'restaurants') return renderRestaurants({ state, store, $app, rerender: render });
   if (ui.view === 'venues' || state.subscriptions.size === 0) return renderVenues(state);
   if (ui.view === 'calendar') return renderCalendar(state, events);
   return renderList(state, events, toReview);
@@ -458,6 +463,10 @@ document.addEventListener('click', async (e) => {
       await handleNearbyAction(a, el, { state: store.state, store, $app, rerender: render });
       return;
     }
+    if (a.startsWith('rs-')) {
+      await handleRestaurantAction(a, el, { state: store.state, store, $app, rerender: render });
+      return;
+    }
     switch (a) {
       case 'view':
         setPref('view', el.dataset.view);
@@ -553,6 +562,10 @@ document.addEventListener('submit', async (e) => {
     await handleNearbySubmit(form, { state: store.state, store, $app, rerender: render });
     return;
   }
+  if (a.startsWith('rs-')) {
+    await handleRestaurantSubmit(form, { state: store.state, store, $app, rerender: render });
+    return;
+  }
   const data = new FormData(form);
   ui.busy = true;
   try {
@@ -583,6 +596,10 @@ document.addEventListener('change', (e) => {
     handleNearbyChange(e.target, { state: store.state, store, $app, rerender: render }).catch((err) => alert(err.message));
     return;
   }
+  if (a?.startsWith('rs-')) {
+    handleRestaurantChange(e.target, { state: store.state, store, $app, rerender: render });
+    return;
+  }
   if (a === 'venue') setPref('venue', e.target.value);
   else if (a === 'sort') setPref('sort', e.target.value);
   else return;
@@ -591,6 +608,10 @@ document.addEventListener('change', (e) => {
 
 let searchTimer;
 document.addEventListener('input', (e) => {
+  if (e.target.dataset?.action?.startsWith('rs-')) {
+    handleRestaurantInput(e.target, { state: store.state, store, $app, rerender: render });
+    return;
+  }
   if (e.target.dataset?.action !== 'search') return;
   ui.search = e.target.value;
   clearTimeout(searchTimer);

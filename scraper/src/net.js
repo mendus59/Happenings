@@ -50,3 +50,15 @@ export async function fetchText(url, { timeoutMs = 20000, accept = '*/*' } = {})
 export async function fetchJson(url, opts) {
   return JSON.parse(await fetchText(url, { ...opts, accept: 'application/json' }));
 }
+
+/** Download a file (e.g. a PDF menu), up to maxBytes. Returns { buffer, contentType, url }. */
+export async function fetchBuffer(url, { timeoutMs = 30000, maxBytes = 10_000_000 } = {}) {
+  await assertPublicUrl(url);
+  const res = await fetch(url, { headers: { 'user-agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len > maxBytes) throw new Error(`File too large (${len} bytes)`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > maxBytes) throw new Error(`File too large (${buffer.length} bytes)`);
+  return { buffer, contentType: res.headers.get('content-type') || '', url: res.url };
+}
