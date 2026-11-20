@@ -59,26 +59,39 @@ export const OVERPASS_URLS = [
 ];
 export const OVERPASS_URL = OVERPASS_URLS[0];
 
-/** Run an Overpass query, trying each public server until one answers. Returns the JSON. */
-export async function fetchOverpass(query, { headers = {}, timeoutMs = 60000, urls = OVERPASS_URLS } = {}) {
-  let lastErr;
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        body: new URLSearchParams({ data: query }),
-        headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (res.ok) return await res.json();
-      lastErr = new Error(res.status === 429 ? 'The map server is busy. Try again in a minute.' : `Map server error (${res.status})`);
-      lastErr.status = res.status;
-      if (res.status === 400) break; // bad query: other servers will say the same
-    } catch (e) {
-      lastErr = e;
+/**
+ * Run an Overpass query, trying each public server until one answers. Returns the JSON.
+ * Busy servers answer 429/504; `rounds` > 1 waits `retryDelayMs` and tries them all again.
+ */
+export async function fetchOverpass(query, { headers = {}, timeoutMs = 60000, urls = OVERPASS_URLS, rounds = 1, retryDelayMs = 20000 } = {}) {
+  const failures = [];
+  let last;
+  for (let round = 0; round < rounds; round++) {
+    if (round) await new Promise((r) => setTimeout(r, retryDelayMs));
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          body: new URLSearchParams({ data: query }),
+          headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.ok) return await res.json();
+        last = new Error(res.status === 429 || res.status === 504 ? 'The map server is busy. Try again in a minute.' : `Map server error (${res.status})`);
+        last.status = res.status;
+        failures.push(`${new URL(url).host}: HTTP ${res.status}`);
+        if (res.status === 400) throw last; // bad query: other servers will say the same
+      } catch (e) {
+        if (e.status === 400) throw e;
+        if (!e.status) failures.push(`${new URL(url).host}: ${e.cause?.code || e.name || e.message}`);
+        last = e.status ? last : e;
+      }
     }
   }
-  throw lastErr || new Error('No map server answered.');
+  const err = new Error(`No map server answered (${failures.join('; ')})`);
+  err.status = last?.status;
+  err.userMessage = last?.status ? last.message : 'Couldn’t reach the map server. Try again in a minute.';
+  throw err;
 }
 
 /** Normalize an Overpass element into a place. */

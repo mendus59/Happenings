@@ -5,7 +5,7 @@ import { UA } from '../net.js';
 
 export async function fetchOsmPlaces(area) {
   const query = overpassQuery({ bbox: [area.s, area.w, area.n, area.e], onlyFoodDrink: true, timeout: 90 });
-  const json = await fetchOverpass(query, { headers: { 'user-agent': UA }, timeoutMs: 120000 });
+  const json = await fetchOverpass(query, { headers: { 'user-agent': UA }, timeoutMs: 120000, rounds: 3 });
   return (json.elements || []).map(placeFromElement).filter((p) => p && FOOD_DRINK_KINDS.has(p.kind));
 }
 

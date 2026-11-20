@@ -34,7 +34,7 @@ async function overpass(q) {
   try {
     json = await fetchOverpass(q);
   } catch (e) {
-    throw new Error(e.status ? e.message : 'Couldn’t reach the map server. Try again in a minute.');
+    throw new Error(e.userMessage || 'Couldn’t reach the map server. Try again in a minute.');
   }
   return (json.elements || []).map(placeFromElement).filter(Boolean);
 }
