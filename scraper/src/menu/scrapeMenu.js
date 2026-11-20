@@ -11,6 +11,7 @@ const looksPdf = (u) => /\.pdf($|[?#])/i.test(u) || /static1\.squarespace\.com\/
 async function readPdf(url, dump) {
   const { buffer, contentType } = await fetchBuffer(url);
   if (!/pdf/i.test(contentType) && buffer.subarray(0, 5).toString() !== '%PDF-') throw new Error('not a PDF');
+  dump?.(url, 'pdf', buffer);
   const lines = await pdfToLines(buffer);
   dump?.(url, 'pdf.txt', lines.join('\n'));
   return { items: menuFromLines(lines), source: 'pdf', links: [], orderLinks: [], hints: {}, menuUrls: [] };

@@ -113,3 +113,28 @@ test('price level, ordering services, search links, chunking, areas', () => {
   assert.equal(areas.length, 1);
   assert.equal(areas[0].n, 47.8);
 });
+
+test('PDF columns on different baselines are still read column by column', async () => {
+  const { pageLines } = await import('../src/menu/pdf.js');
+  const t = (s, x, y, w = s.length * 5) => ({ str: s, transform: [10, 0, 0, 10, x, y], width: w });
+  const items = [];
+  const left = ['STARTERS', 'Wings 14', 'Crispy and hot', 'Nachos 12', 'Beans and cheese', 'Fries 6'];
+  const right = ['BURGERS', 'Smash Burger 16', 'Two patties, pickles', 'Veggie Burger 15', 'House black bean patty', 'Kids Burger 9'];
+  left.forEach((s, i) => items.push(t(s, 40, 700 - i * 20)));
+  right.forEach((s, i) => items.push(t(s, 330, 707 - i * 20)));
+  assert.deepEqual(pageLines(items, 612), [...left, ...right]);
+});
+
+test('a one-column PDF with prices far right stays one column', async () => {
+  const { pageLines } = await import('../src/menu/pdf.js');
+  const t = (s, x, y, w = s.length * 5) => ({ str: s, transform: [10, 0, 0, 10, x, y], width: w });
+  const items = [];
+  ['Wings', 'Nachos', 'Fries', 'Salad', 'Soup', 'Burger'].forEach((s, i) => {
+    items.push(t(s, 40, 700 - i * 30));
+    items.push(t('Crispy, hot and served with ranch dressing', 40, 688 - i * 30));
+    items.push(t('$' + (10 + i), 540, 703 - i * 30));
+  });
+  const lines = pageLines(items, 612);
+  assert.equal(lines[0], 'Wings $10');
+  assert.equal(lines[1], 'Crispy, hot and served with ranch dressing');
+});

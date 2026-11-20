@@ -39,17 +39,57 @@ export function pageLines(textItems, pageWidth) {
     }
     return { y: r.y, segs: glued };
   });
-  // Two columns when many rows have a second segment starting past the middle.
-  const mid = pageWidth / 2;
-  const multi = segRows.filter((r) => r.segs.some((sg) => sg.x >= mid * 0.9) && r.segs.some((sg) => sg.x < mid * 0.9)).length;
-  const twoCol = multi >= Math.max(3, segRows.length * 0.2);
-  if (!twoCol) return segRows.map((r) => r.segs.map((sg) => sg.s).join('  ').trim()).filter(Boolean);
-  const left = [];
-  const right = [];
-  for (const r of segRows) {
-    for (const sg of r.segs) (sg.x >= mid * 0.9 ? right : left).push(sg.s.trim());
+  return columnOrder(segRows, pageWidth);
+}
+
+/**
+ * Find column gutters: vertical lines (between 15% and 85% of the page) that almost no
+ * text segment crosses, with real text on both sides. Rows in different columns often sit
+ * on different baselines, so this looks at the page as a whole rather than row by row.
+ */
+export function columnOrder(segRows, pageWidth) {
+  const flat = segRows.map((r) => r.segs.map((sg) => sg.s).join('  ').trim()).filter(Boolean);
+  const segs = segRows.flatMap((r) => r.segs.map((sg) => ({ ...sg, y: r.y })));
+  if (segs.length < 8) return flat;
+  const allowed = Math.max(1, Math.floor(segs.length * 0.03));
+  const step = Math.max(1, pageWidth / 200);
+  const open = [];
+  for (let g = pageWidth * 0.15; g <= pageWidth * 0.85; g += step) {
+    const crossing = segs.filter((sg) => sg.x < g - 1 && sg.x2 > g + 1).length;
+    open.push(crossing <= allowed ? g : null);
   }
-  return [...left, ...right].filter(Boolean);
+  // Middle of each run of open positions is a candidate gutter.
+  const gutters = [];
+  let run = [];
+  for (const g of [...open, null]) {
+    if (g != null) run.push(g);
+    else if (run.length) {
+      gutters.push(run[Math.floor(run.length / 2)]);
+      run = [];
+    }
+  }
+  // Keep gutters that leave a real column of words (not just a column of prices) on each side.
+  const wordy = (sg) => /[a-z]{3}/i.test(sg.s) && !isPrice(sg.s);
+  const edges = [-Infinity];
+  for (const g of gutters) {
+    const left = segs.filter((sg) => sg.x >= edges.at(-1) && sg.x2 <= g + 1 && wordy(sg)).length;
+    const right = segs.filter((sg) => sg.x >= g - 1 && wordy(sg)).length;
+    const total = segs.filter(wordy).length;
+    if (left >= Math.max(4, total * 0.15) && right >= Math.max(4, total * 0.15)) edges.push(g);
+  }
+  if (edges.length === 1) return flat;
+  edges.push(Infinity);
+  const cols = edges.slice(1).map(() => []);
+  // A segment that spans gutters (a page title) goes in the column where it starts.
+  for (const r of segRows) {
+    const byCol = cols.map(() => []);
+    for (const sg of r.segs) {
+      const c = edges.findIndex((e, i) => sg.x >= e - 1 && sg.x < edges[i + 1] - 1);
+      byCol[Math.max(0, c)].push(sg.s.trim());
+    }
+    byCol.forEach((parts, c) => parts.length && cols[c].push(parts.join('  ')));
+  }
+  return cols.flat().filter(Boolean);
 }
 
 export async function pdfToLines(data) {
