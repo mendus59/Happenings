@@ -1,6 +1,7 @@
 import { renderPage } from './browser.js';
 import { extractFromPage, findEventPageLinks, siteNameFrom } from './extract/index.js';
 import { normalizeEvent, dedupe, DEFAULT_TZ } from './normalize.js';
+import { detectClosure } from './closure.js';
 
 const PAST_GRACE_MS = 6 * 3600e3;
 const FUTURE_LIMIT_MS = 365 * 864e5;
@@ -59,5 +60,6 @@ export async function scrapeVenue(browser, url, { venueId, log = console.log, no
       .filter(Boolean)
       .filter((e) => (e.end || e.start).getTime() >= nowMs - PAST_GRACE_MS && e.start.getTime() <= nowMs + FUTURE_LIMIT_MS),
   );
-  return { name, eventsPageUrl, events, methods, tried };
+  const closure = detectClosure(page.html);
+  return { name, eventsPageUrl, events, methods, tried, closure };
 }

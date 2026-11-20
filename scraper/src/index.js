@@ -115,7 +115,13 @@ async function syncAll() {
       } catch (e) {
         errors++;
         log(`  ERROR: ${e.message}`);
-        await venueRef.set({ ...base, status: 'error', error: String(e.message).slice(0, 300) }, { merge: true });
+        // A site that has been unreachable for days in a row may have shut down.
+        const errorStreak = (v.prev?.errorStreak || 0) + 1;
+        const gone = /ENOTFOUND|HTTP 404|HTTP 410|ERR_NAME_NOT_RESOLVED/.test(e.message) && errorStreak >= 12;
+        await venueRef.set(
+          { ...base, status: 'error', error: String(e.message).slice(0, 300), errorStreak, siteGone: gone },
+          { merge: true },
+        );
         continue;
       }
       const evCol = venueRef.collection('events');
@@ -167,6 +173,9 @@ async function syncAll() {
           eventCount: upcoming,
           methods: result.methods,
           emptyStreak,
+          errorStreak: 0,
+          siteGone: false,
+          closure: result.closure ? { text: result.closure, detectedAt: v.prev?.closure?.detectedAt || base.lastScrapedAt } : null,
           lastSuccessAt: base.lastScrapedAt,
         },
         { merge: true },

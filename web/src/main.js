@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { auth } from './firebase.js';
 import { createStore } from './store.js';
+import { renderNearby, leaveNearby, handleNearbyAction, handleNearbySubmit, handleNearbyChange } from './nearby.js';
 import { CATEGORY_INFO, categoryInfo } from '../../shared/categories.js';
 import {
   esc,
@@ -32,7 +33,7 @@ const $user = document.getElementById('user');
 const $dialog = document.getElementById('event-dialog');
 
 const ui = {
-  view: loadPref('view', 'list'), // list | calendar | venues
+  view: loadPref('view', 'list'), // list | calendar | venues | nearby
   status: loadPref('status', 'active'), // review | active | interested | favorite | hidden
   categories: new Set(loadPref('categories', [])),
   venue: loadPref('venue', ''),
@@ -119,6 +120,7 @@ function sorted(events) {
 // ---------- rendering ----------
 
 function render() {
+  if (!user || ui.view !== 'nearby' || store?.state.error || store?.state.loading) leaveNearby($app);
   if (!user) return renderAuth();
   const state = store.state;
   const events = allEvents(state);
@@ -130,6 +132,7 @@ function render() {
     ['list', 'Events'],
     ['calendar', 'Calendar'],
     ['venues', 'Venues'],
+    ['nearby', 'Nearby'],
   ]
     .map(
       ([id, label]) =>
@@ -148,6 +151,7 @@ function render() {
     $app.innerHTML = `<div class="empty">Loading…</div>`;
     return;
   }
+  if (ui.view === 'nearby') return renderNearby({ state, store, $app, rerender: render });
   if (ui.view === 'venues' || state.subscriptions.size === 0) return renderVenues(state);
   if (ui.view === 'calendar') return renderCalendar(state, events);
   return renderList(state, events, toReview);
@@ -450,6 +454,10 @@ document.addEventListener('click', async (e) => {
   if (!el || el.tagName === 'FORM' || el.tagName === 'SELECT' || el.tagName === 'INPUT') return;
   const a = el.dataset.action;
   try {
+    if (a.startsWith('nb-')) {
+      await handleNearbyAction(a, el, { state: store.state, store, $app, rerender: render });
+      return;
+    }
     switch (a) {
       case 'view':
         setPref('view', el.dataset.view);
@@ -541,6 +549,10 @@ document.addEventListener('submit', async (e) => {
   const a = form.dataset.action;
   if (!a) return;
   e.preventDefault();
+  if (a.startsWith('nb-')) {
+    await handleNearbySubmit(form, { state: store.state, store, $app, rerender: render });
+    return;
+  }
   const data = new FormData(form);
   ui.busy = true;
   try {
@@ -567,6 +579,10 @@ document.addEventListener('submit', async (e) => {
 
 document.addEventListener('change', (e) => {
   const a = e.target.dataset?.action;
+  if (a?.startsWith('nb-')) {
+    handleNearbyChange(e.target, { state: store.state, store, $app, rerender: render }).catch((err) => alert(err.message));
+    return;
+  }
   if (a === 'venue') setPref('venue', e.target.value);
   else if (a === 'sort') setPref('sort', e.target.value);
   else return;
