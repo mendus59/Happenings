@@ -15,6 +15,8 @@ const DAY = 864e5;
 const OSM_EVERY_DAYS = Number(process.env.RESTAURANT_OSM_EVERY_DAYS || 7);
 const MENU_EVERY_DAYS = Number(process.env.MENU_EVERY_DAYS || 30);
 const MENU_RETRY_DAYS = 7;
+// Bump when the menu reader improves: menus read by an older version are read again.
+export const MENU_VERSION = 2;
 const MENU_BUDGET = Number(process.env.MENU_BUDGET || 120); // websites visited per run
 const TIME_BUDGET_MS = Number(process.env.TIME_BUDGET_MIN || 35) * 60e3;
 const CONCURRENCY = 3;
@@ -29,6 +31,7 @@ const { values: args } = parseArgs({
     box: { type: 'string' },
     url: { type: 'string', multiple: true },
     limit: { type: 'string', default: '6' },
+    dump: { type: 'string' }, // folder to save each page read (for improving the menu reader)
   },
 });
 const log = (...a) => console.log(...a);
@@ -66,6 +69,7 @@ export function combine(osm, site = {}) {
     closure: site.closure || null,
     menuCheckedAt: site.menuCheckedAt || 0,
     menuError: site.menuError || '',
+    menuV: site.menuV || 1,
   };
 }
 
@@ -78,14 +82,15 @@ const siteFields = (r) =>
     closure: r.closure,
     menuCheckedAt: r.menuCheckedAt,
     menuError: r.menuError,
+    menuV: r.menuV,
     dine: r.osm?.dine !== true && r.dine === true ? true : undefined,
     takeout: r.osm?.takeout !== true && r.takeout === true ? true : undefined,
     delivery: r.osm?.delivery !== true && r.delivery === true ? true : undefined,
   };
 
-async function visit(browser, r) {
+async function visit(browser, r, dump) {
   try {
-    const res = await scrapeMenu(browser, r, { log: () => {} });
+    const res = await scrapeMenu(browser, r, { log: () => {}, dump });
     return {
       m: res.items,
       menuUrl: res.menuUrl,
@@ -97,9 +102,10 @@ async function visit(browser, r) {
       delivery: res.delivery,
       menuCheckedAt: Date.now(),
       menuError: '',
+      menuV: MENU_VERSION,
     };
   } catch (e) {
-    return { menuCheckedAt: Date.now(), menuError: String(e.message || e).slice(0, 200) };
+    return { menuCheckedAt: Date.now(), menuError: String(e.message || e).slice(0, 200), menuV: MENU_VERSION };
   }
 }
 
@@ -131,8 +137,9 @@ export function chunk(list, maxBytes = CHUNK_BYTES) {
   return chunks;
 }
 
-const needsMenu = (r, now) =>
-  r.website && (!r.menuCheckedAt || now - r.menuCheckedAt > (r.menuError ? MENU_RETRY_DAYS : MENU_EVERY_DAYS) * DAY);
+export const needsMenu = (r, now) =>
+  !!r.website &&
+  (!r.menuCheckedAt || (r.menuV || 1) < MENU_VERSION || now - r.menuCheckedAt > (r.menuError ? MENU_RETRY_DAYS : MENU_EVERY_DAYS) * DAY);
 
 async function dryRun() {
   const browser = await launchBrowser();
@@ -148,9 +155,19 @@ async function dryRun() {
       list = list.filter((r) => r.website).slice(0, Number(args.limit));
     }
     for (const url of args.url || []) list.push({ id: 'cli', name: url, website: url });
+    let dump;
+    if (args.dump) {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(args.dump, { recursive: true });
+      let n = 0;
+      dump = (url, ext, content) => {
+        const name = `${String(++n).padStart(3, '0')}-${url.replace(/^https?:\/\//, '').replace(/[^a-z0-9]+/gi, '_').slice(0, 80)}.${ext}`;
+        writeFileSync(`${args.dump}/${name}`, content || '');
+      };
+    }
     for (const r of list) {
       const t0 = Date.now();
-      const site = await visit(browser, r);
+      const site = await visit(browser, r, dump);
       const c = combine(r, site);
       log(`\n${r.name} — ${r.website} (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
       if (site.menuError) log(`  error: ${site.menuError}`);

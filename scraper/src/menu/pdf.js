@@ -7,7 +7,8 @@ const isPrice = (s) => /^\$?\s?\d{1,3}(?:[.,]\d{1,2})?(?:\s*\/\s*\$?\d{1,3}(?:[.
 /** Pure-ish: group positioned text items of one page into lines. */
 export function pageLines(textItems, pageWidth) {
   const items = textItems
-    .filter((t) => t.str && t.str.trim())
+    // Skip rotated text (decorative lettering on a curve, sideways labels).
+    .filter((t) => t.str && t.str.trim() && Math.abs(t.transform[1]) < 0.01 && Math.abs(t.transform[2]) < 0.01)
     .map((t) => ({ x: t.transform[4], y: t.transform[5], w: t.width || 0, h: Math.abs(t.transform[3]) || 10, s: t.str }));
   // Rows: items whose baselines are within a fraction of the font size.
   items.sort((a, b) => b.y - a.y || a.x - b.x);
@@ -39,17 +40,72 @@ export function pageLines(textItems, pageWidth) {
     }
     return { y: r.y, segs: glued };
   });
-  // Two columns when many rows have a second segment starting past the middle.
-  const mid = pageWidth / 2;
-  const multi = segRows.filter((r) => r.segs.some((sg) => sg.x >= mid * 0.9) && r.segs.some((sg) => sg.x < mid * 0.9)).length;
-  const twoCol = multi >= Math.max(3, segRows.length * 0.2);
-  if (!twoCol) return segRows.map((r) => r.segs.map((sg) => sg.s).join('  ').trim()).filter(Boolean);
-  const left = [];
-  const right = [];
-  for (const r of segRows) {
-    for (const sg of r.segs) (sg.x >= mid * 0.9 ? right : left).push(sg.s.trim());
+  return columnOrder(segRows, pageWidth);
+}
+
+/**
+ * Find column gutters: vertical lines (between 15% and 85% of the page) that few text
+ * segments cross, with real text starting on each side. Rows in different columns often sit
+ * on different baselines, so this looks at the page as a whole rather than row by row.
+ * Segments that do cross a gutter (section titles and notes across the page) split the
+ * page into bands, and each band is read column by column.
+ */
+export function columnOrder(segRows, pageWidth) {
+  const flat = segRows.map((r) => r.segs.map((sg) => sg.s).join('  ').trim()).filter(Boolean);
+  const segs = segRows.flatMap((r) => r.segs);
+  if (segs.length < 8) return flat;
+  const step = Math.max(1, pageWidth / 200);
+  const crossings = (g) => segs.filter((sg) => sg.x < g - 1 && sg.x2 > g + 1).length;
+  const scan = [];
+  for (let g = pageWidth * 0.15; g <= pageWidth * 0.85; g += step) scan.push({ g, n: crossings(g) });
+  const median = [...scan].sort((a, b) => a.n - b.n)[Math.floor(scan.length / 2)].n;
+  const limit = Math.min(Math.max(1, Math.floor(segs.length * 0.15)), Math.floor(median * 0.5));
+  // Lowest point of each run of open positions is a candidate gutter.
+  const gutters = [];
+  let run = [];
+  for (const p of [...scan, null]) {
+    if (p && p.n <= limit) run.push(p);
+    else if (run.length) {
+      const low = Math.min(...run.map((q) => q.n));
+      const lows = run.filter((q) => q.n === low);
+      gutters.push(lows[Math.floor(lows.length / 2)].g);
+      run = [];
+    }
   }
-  return [...left, ...right].filter(Boolean);
+  // Keep gutters that leave a real column of words (not just a column of prices) on each side.
+  const wordy = (sg) => /[a-z]{3}/i.test(sg.s) && !isPrice(sg.s);
+  const total = segs.filter(wordy).length;
+  const edges = [-Infinity];
+  for (const g of gutters) {
+    const left = segs.filter((sg) => sg.x >= edges.at(-1) - 1 && sg.x2 <= g + 1 && wordy(sg)).length;
+    const right = segs.filter((sg) => sg.x >= g - 1 && wordy(sg)).length;
+    if (left >= Math.max(4, total * 0.15) && right >= Math.max(4, total * 0.15)) edges.push(g);
+  }
+  if (edges.length === 1) return flat;
+  edges.push(Infinity);
+  const inner = edges.slice(1, -1);
+  const spans = (sg) => inner.some((g) => sg.x < g - 1 && sg.x2 > g + 1);
+  const out = [];
+  let cols = inner.map(() => []).concat([[]]);
+  const flush = () => {
+    out.push(...cols.flat());
+    cols = cols.map(() => []);
+  };
+  for (const r of segRows) {
+    if (r.segs.some(spans)) {
+      flush();
+      out.push(r.segs.map((sg) => sg.s.trim()).join('  '));
+      continue;
+    }
+    const byCol = cols.map(() => []);
+    for (const sg of r.segs) {
+      const c = edges.findIndex((e, i) => sg.x >= e - 1 && sg.x < edges[i + 1] - 1);
+      byCol[Math.max(0, c)].push(sg.s.trim());
+    }
+    byCol.forEach((parts, c) => parts.length && cols[c].push(parts.join('  ')));
+  }
+  flush();
+  return out.filter(Boolean);
 }
 
 export async function pdfToLines(data) {

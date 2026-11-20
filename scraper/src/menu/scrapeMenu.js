@@ -8,16 +8,21 @@ import { pdfToLines } from './pdf.js';
 
 const looksPdf = (u) => /\.pdf($|[?#])/i.test(u) || /static1\.squarespace\.com\/static\/.+\/t\//i.test(u) || /\.wixstatic\.com\/ugd\//i.test(u);
 
-async function readPdf(url) {
+async function readPdf(url, dump) {
   const { buffer, contentType } = await fetchBuffer(url);
   if (!/pdf/i.test(contentType) && buffer.subarray(0, 5).toString() !== '%PDF-') throw new Error('not a PDF');
-  return { items: menuFromLines(await pdfToLines(buffer)), source: 'pdf', links: [], orderLinks: [], hints: {}, menuUrls: [] };
+  dump?.(url, 'pdf', buffer);
+  const lines = await pdfToLines(buffer);
+  dump?.(url, 'pdf.txt', lines.join('\n'));
+  return { items: menuFromLines(lines), source: 'pdf', links: [], orderLinks: [], hints: {}, menuUrls: [] };
 }
 
-async function readPage(browser, url) {
-  if (looksPdf(url)) return readPdf(url);
+async function readPage(browser, url, dump) {
+  if (looksPdf(url)) return readPdf(url, dump);
   try {
     const page = await renderPage(browser, url, { timeoutMs: 40000 });
+    dump?.(page.url, 'html', page.html);
+    page.frames.forEach((f, i) => dump?.(f.url, `frame${i}.html`, f.html));
     const r = extractMenu(page.html, page.url);
     // Menus often live in an embedded widget (BentoBox, Popmenu, SinglePlatform...).
     for (const f of page.frames) {
@@ -27,7 +32,7 @@ async function readPage(browser, url) {
     }
     return { ...r, url: page.url, closure: detectClosure(page.html) };
   } catch (e) {
-    if (/download/i.test(e.message)) return readPdf(url);
+    if (/download/i.test(e.message)) return readPdf(url, dump);
     throw e;
   }
 }
@@ -36,7 +41,7 @@ async function readPage(browser, url) {
  * Returns { items, menuUrl, menuSource, orderLinks, dine, takeout, delivery, closure, error }.
  * dine/takeout/delivery are true when the site says so, otherwise undefined.
  */
-export async function scrapeMenu(browser, r, { log = console.log } = {}) {
+export async function scrapeMenu(browser, r, { log = console.log, dump } = {}) {
   const out = { items: [], menuUrl: '', menuSource: '', orderLinks: [], closure: null };
   const hints = {};
   const addHints = (h = {}) => {
@@ -46,7 +51,7 @@ export async function scrapeMenu(browser, r, { log = console.log } = {}) {
   const addOrders = (list = []) => list.forEach((o) => orders.has(o.id) || orders.set(o.id, o));
 
   const start = r.menuUrl || r.website;
-  const home = await readPage(browser, start);
+  const home = await readPage(browser, start, dump);
   out.closure = home.closure || null;
   addHints(home.hints);
   addOrders(home.orderLinks);
@@ -58,7 +63,7 @@ export async function scrapeMenu(browser, r, { log = console.log } = {}) {
     for (const u of next) {
       tried.add(u);
       try {
-        const res = await readPage(browser, u);
+        const res = await readPage(browser, u, dump);
         addHints(res.hints);
         addOrders(res.orderLinks);
         if (!out.menuUrl) out.menuUrl = u; // a menu link is useful even if we can't read it

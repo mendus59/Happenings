@@ -158,9 +158,11 @@ export function htmlToLines($) {
     .filter(Boolean);
 }
 
-const DOLLAR_PRICE = /\$\s?(\d{1,3}(?:[.,]\d{1,2})?)(?:\s*(?:\/|\||or)\s*\$?\s?\d{1,3}(?:[.,]\d{1,2})?)*\s*\+?$/;
-const BARE_PRICE = /(?:^|\s|\.{2,}|…)(\d{1,3}(?:[.,]\d{2})?)(?:\s*(?:\/|\|)\s*\d{1,3}(?:[.,]\d{2})?)*\s*$/;
-const NOT_DISH = /\b(?:am|pm|a\.m|p\.m|hours?|open|closed?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|suite|ste|street|st\.|ave|avenue|road|rd\.|hwy|wa|zip|phone|call|tel|fax|copyright|©|rights reserved|gift cards?|tax|gratuity|parties of|minimum|delivery fee)\b/i;
+const DOLLAR_PRICE = /\$\s?(\d{1,3}(?:[.,]\d{1,2})?)(?:\s*(?:\/|\||or)\s*\$?\s?\d{1,3}(?:[.,]\d{1,2})?)*\s*\+?(?:\s*\([^)]{0,40}\))?$/;
+const BARE_PRICE = /(?:^|\s|\.{2,}|…|[–—-]\s)(\d{1,3}(?:[.,]\d{2})?)(?:\s*(?:\/|\|)\s*\d{1,3}(?:[.,]\d{2})?)*(?:\s*\([^)]{0,40}\))?\s*$/;
+const NOT_DISH = /\b(?:am|pm|a\.m|p\.m|hours?|open|closed?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|suite|ste|street|st\.|ave|avenue|road|rd\.|hwy|wa|zip|phone|call|tel|fax|copyright|©|rights reserved|gift cards?|tax|gratuity|parties of|minimum|delivery fee|serves|ages?|years?|login|slot|togel)\b/i;
+const ADDON = /^(?:\+|add\b|add-on|adds?\s|make it\b|sub(?:stitute)?\b|swap\b|extra\b|upgrade|choice of|choose|with\s|w\/|or\s)|\badd$/i;
+const SIZE = /^(?:cup|bowl|small|sm|medium|med|large|lg|grande|half|full|regular|reg|single|double|triple|glass|bottle|carafe|pitcher|slice|whole|pint|\d+\s*(?:pc|pcs|piece|pieces|oz|in|inch|")\b)/i;
 const PHONE = /\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/;
 const MP = /\b(?:MP|market price|market)\s*$/i;
 
@@ -169,75 +171,139 @@ function priceAtEnd(line, allowBare) {
   let m = line.match(DOLLAR_PRICE);
   if (!m && allowBare) m = line.match(BARE_PRICE);
   if (!m) {
-    if (MP.test(line) && line.replace(MP, '').trim().length > 2) return { price: null, name: line.replace(MP, '') };
+    if (MP.test(line) && line.replace(MP, '').trim().length > 2) return { price: null, name: line.replace(MP, '').trim() };
     return null;
   }
-  const name = line.slice(0, m.index).replace(/[.…\s]+$/, '');
+  if (line[m.index] === '+' || line.slice(Math.max(0, m.index - 1), m.index + 1).includes('+')) return { addon: true, name: line };
+  const name = line.slice(0, m.index).replace(/[.…\s–—-]+$/, '').trim();
   return { price: toPrice(m[1]), name };
 }
 
-const isPriceOnly = (line, allowBare) =>
-  allowBare ? /^\$?\s?\d{1,3}(?:[.,]\d{1,2})?(?:\s*(?:\/|\|)\s*\$?\d{1,3}(?:[.,]\d{1,2})?)*\s*\+?$/.test(line) : /^\$\s?\d{1,3}(?:[.,]\d{1,2})?(?:\s*(?:\/|\|)\s*\$?\d{1,3}(?:[.,]\d{1,2})?)*\s*\+?$/.test(line) || MP.test(line) && line.length < 14;
+const PRICE_ONLY = /^\$?\s?\d{1,3}(?:[.,]\d{1,2})?(?:\s*(?:\/|\|)\s*\$?\d{1,3}(?:[.,]\d{1,2})?)*\s*\+?$/;
+const isPriceOnly = (line, allowBare) => (allowBare ? PRICE_ONLY.test(line) : PRICE_ONLY.test(line) && line.includes('$')) || (MP.test(line) && line.length < 14);
 
 const isHeadingLike = (l) => l.startsWith('§ ') || (l.length <= 40 && l === l.toUpperCase() && /[A-Z]{3}/.test(l) && !/\d/.test(l));
+const wordy = (s) => /[a-z]{3,}/i.test(s.replace(/\boz\b/gi, ''));
+/** Looks like the tail of a description rather than a dish name. */
+const descy = (s) => /^[a-z(]/.test(s) || s.length > 55 || (s.match(/,/g) || []).length >= 2 || /[,;]$/.test(s);
+/** Looks like a dish name or a section title. */
+const titley = (s) => s.length >= 2 && s.length <= 55 && /^[\p{Lu}0-9"“'(]/u.test(s) && !/[,;]$/.test(s) && (s.match(/,/g) || []).length < 2 && !NOT_DISH.test(s) && wordy(s);
 
 /** Pure: read menu items out of lines of text (from a web page or a PDF). */
 export function menuFromLines(lines) {
-  const dollarLines = lines.filter((l) => /\$\s?\d/.test(l)).length;
-  const allowBare = dollarLines < 3; // menus that print "Pad Thai 14" with no dollar signs
+  const dollarEnd = lines.filter((l) => DOLLAR_PRICE.test(l) && !/\+\s?\$/.test(l)).length;
+  const bareEnd = lines.filter((l) => !/\$/.test(l) && BARE_PRICE.test(l) && wordy(l)).length;
+  // Menus that print "Pad Thai 14" with no dollar signs (dollar signs only on add-ons).
+  const allowBare = bareEnd >= 3 && bareEnd >= dollarEnd * 0.5;
   const items = [];
   let section = '';
-  let pending = null; // last item, which may still get a description (only when its price was inline)
+  let heading = null; // { text } — a heading not yet used as a dish name or a section
+  let pending = null; // last item, which may still get (more) description
   let buf = []; // lines since the last item or heading, not yet used
   const push = (it) => {
     if (it) items.push(it);
     return it;
   };
+  const useHeadingAsSection = () => {
+    if (heading) section = heading.text;
+    heading = null;
+  };
+  /** Name for a priced line whose own text is description: the heading, or the last title-like line. */
+  const titleFor = () => {
+    if (heading) return { name: heading.text, desc: buf, fromHeading: true };
+    for (let k = buf.length - 1; k >= 0; k--) if (titley(buf[k]) && !descy(buf[k])) return { name: buf[k], desc: buf.slice(k + 1) };
+    return null;
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    if (raw.length > 260) {
+    if (raw.length > 300) {
       pending = null;
       buf = [];
       continue;
     }
-    const line = raw.replace(/^§ /, '');
+    const line = raw.replace(/^§ ?/, '').trim();
+    if (!line) continue;
+
     if (isPriceOnly(line, allowBare)) {
       // "Name" / "description" / "$14" layouts (menu widgets, PDFs).
       const cand = buf.filter((l) => !NOT_DISH.test(l.slice(0, 40)));
-      if (cand.length) {
-        const [name, desc] = cand.length >= 2 && cand.at(-2).length <= 70 ? [cand.at(-2), cand.at(-1)] : [cand.at(-1), ''];
-        if (name.length <= 90) push(item(name, toPrice(line), desc.length > 220 ? '' : desc, section));
+      const short = cand.filter((l) => l.length <= 70 && titley(l));
+      if (short.length) {
+        // "Name / description / $8": the name is the earlier of the last two lines.
+        const name = cand.length >= 2 && titley(cand.at(-2)) && cand.at(-2).length <= 70 ? cand.at(-2) : short.at(-1);
+        const desc = cand.slice(cand.indexOf(name) + 1).join(' ');
+        useHeadingAsSection();
+        pending = push(item(name, toPrice(line), desc, section));
+      } else if (heading) {
+        pending = push(item(heading.text, toPrice(line), cand.join(' '), section));
+        heading = null;
       } else if (pending && pending.p == null) pending.p = toPrice(line);
       pending = null;
       buf = [];
       continue;
     }
+
     const hit = priceAtEnd(line, allowBare);
-    if (hit && hit.name.length >= 2 && hit.name.length <= 90 && !NOT_DISH.test(hit.name) && /[a-z]{2}/i.test(hit.name)) {
-      // "Name — description $14" on one line.
-      const [n, ...rest] = hit.name.split(/\s+[–—-]\s+|\s*:\s+/);
-      const split = rest.length && n.length <= 50;
-      pending = push(item(split ? n : hit.name, hit.price, split ? rest.join(' - ') : '', section));
+    if (hit?.addon || (hit && ADDON.test(hit.name))) {
+      buf = [];
+      continue; // "+ Add bacon $3", "Substitute shrimp Add 3.50"
+    }
+    if (hit && hit.name.length <= 160 && !NOT_DISH.test(hit.name.slice(0, 40)) && wordy(hit.name)) {
+      const t = descy(hit.name) || SIZE.test(hit.name) || buf.some((l) => l.length > 60) ? titleFor() : null;
+      if (t) {
+        const size = SIZE.test(hit.name) ? hit.name : '';
+        const name = size ? `${t.name} (${size})` : t.name;
+        const desc = [...t.desc, size ? '' : hit.name].filter(Boolean).join(' ');
+        if (t.fromHeading) heading = null;
+        pending = push(item(name, hit.price, desc, section));
+      } else {
+        useHeadingAsSection();
+        // "Name — description $14" on one line.
+        const [n, ...rest] = hit.name.split(/\s+[–—-]\s+|\s*:\s+/);
+        const split = rest.length && n.length <= 50;
+        pending = push(item(split ? n : hit.name, hit.price, split ? rest.join(' - ') : '', section));
+      }
       buf = [];
       continue;
     }
-    if (isHeadingLike(raw) && line.length <= 60 && !NOT_DISH.test(line)) {
-      section = line;
+
+    const next = (lines[i + 1] || '').replace(/^§ ?/, '').trim();
+    const nextHit = priceAtEnd(next, allowBare);
+    const headingHere =
+      (isHeadingLike(raw) && line.length <= 60 && !NOT_DISH.test(line)) ||
+      // "Starters." followed directly by a priced dish line.
+      // Not when the line could be the pending dish's description (e.g. "Marinated pork, pineapple").
+      (!(pending && !pending.d) && !line.includes(',') &&
+        line.length <= 32 && !/\d/.test(line) && line.split(/\s+/).length <= 4 && titley(line) && nextHit && !nextHit.addon && !descy(nextHit.name));
+    if (headingHere) {
+      // A heading straight after another unused heading means the first was a section title.
+      if (heading && !buf.length) useHeadingAsSection();
+      else if (heading && buf.length && buf.join(' ').length >= 30) push(item(heading.text, null, buf.join(' '), section));
+      heading = { text: line.replace(/[.:]$/, '') };
       pending = null;
       buf = [];
       continue;
     }
-    if (pending && !pending.d && line.length >= 8 && line.length <= 220 && !NOT_DISH.test(line.slice(0, 30))) {
-      pending.d = clean(line).slice(0, 160);
-      pending = null;
+    if (pending && line.length <= 220 && (pending.d || '').length < 150 && !NOT_DISH.test(line.slice(0, 30)) && (!pending.d || descy(line) || !titley(line))) {
+      pending.d = clean(`${pending.d || ''} ${line}`).slice(0, 160);
       continue;
     }
     pending = null;
     buf.push(line);
-    if (buf.length > 3) buf.shift();
+    if (buf.length > 6) buf.shift();
   }
-  const out = dedupe(items);
-  return out.filter((i) => i.p != null).length >= MIN_ITEMS ? out : [];
+  const out = dedupe(items).filter((i) => wordy(i.n));
+  if (out.filter((i) => i.p != null).length < MIN_ITEMS) return [];
+  return looksLikeFood(out) ? out : [];
+}
+
+const FOOD = /\b(?:chicken|beef|pork|steak|burger|fries|salad|soup|sandwich|wrap|taco|burrito|pizza|pasta|noodle|rice|egg|eggs|bacon|cheese|sauce|bread|toast|fish|shrimp|salmon|tuna|crab|wings?|curry|roll|sushi|cake|pie|cookie|coffee|latte|espresso|tea|beer|wine|cocktail|margarita|ipa|dessert|chips|dip|nachos|quesadilla|enchilada|tamale|pho|ramen|dumpling|tofu|vegan|vegetarian|gf|potato|onion|tomato|garlic|lettuce|avocado|guacamole|salsa|bbq|grilled|fried|roasted|smoked|baked|served|topped|fresh|house|mushroom|spinach|pancake|waffle|biscuit|gravy|omelet|bagel|muffin|donut|croissant|scone|pastry|smoothie|juice|soda|lemonade|ice cream|sundae|shake|appetizers?|entrees?|sides?|kids|breakfast|lunch|dinner|brunch)\b/i;
+
+/** Rejects spam pages and other price lists that aren't food. */
+export function looksLikeFood(items) {
+  const hits = items.filter((i) => FOOD.test(`${i.n} ${i.d || ''} ${i.s || ''}`)).length;
+  return hits >= Math.max(3, items.length * 0.3);
 }
 
 // ---------- page-level helpers ----------
