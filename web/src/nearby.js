@@ -2,7 +2,7 @@
 // and opt-in suggestions. Map data comes from OpenStreetMap (free).
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { PLACE_KINDS, overpassQuery, placeFromElement, OVERPASS_URL } from '../../shared/places.js';
+import { PLACE_KINDS, overpassQuery, placeFromElement, fetchOverpass } from '../../shared/places.js';
 import { MAX_BOX, boxAround, boxCenter, boxSizeKm, distanceKm, inBox, normalizeBox, profileBox, siteKey } from '../../shared/geo.js';
 import { esc, safeHref, loadPref, savePref } from './util.js';
 
@@ -30,13 +30,12 @@ const nb = {
 // ---------- data ----------
 
 async function overpass(q) {
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    body: new URLSearchParams({ data: q }),
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  });
-  if (!res.ok) throw new Error(res.status === 429 ? 'The map server is busy. Try again in a minute.' : `Map server error (${res.status})`);
-  const json = await res.json();
+  let json;
+  try {
+    json = await fetchOverpass(q);
+  } catch (e) {
+    throw new Error(e.status ? e.message : 'Couldn’t reach the map server. Try again in a minute.');
+  }
   return (json.elements || []).map(placeFromElement).filter(Boolean);
 }
 

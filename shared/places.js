@@ -50,7 +50,36 @@ export function overpassQuery({ around, bbox, onlyFoodDrink = false, timeout = 5
   return `[out:json][timeout:${timeout}];(${sels.map((s) => s + filter + ';').join('')});out center tags;`;
 }
 
-export const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+// Public Overpass servers (all free). The main one sometimes refuses connections when busy,
+// so callers fall through to the next.
+export const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+export const OVERPASS_URL = OVERPASS_URLS[0];
+
+/** Run an Overpass query, trying each public server until one answers. Returns the JSON. */
+export async function fetchOverpass(query, { headers = {}, timeoutMs = 60000, urls = OVERPASS_URLS } = {}) {
+  let lastErr;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: new URLSearchParams({ data: query }),
+        headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok) return await res.json();
+      lastErr = new Error(res.status === 429 ? 'The map server is busy. Try again in a minute.' : `Map server error (${res.status})`);
+      lastErr.status = res.status;
+      if (res.status === 400) break; // bad query: other servers will say the same
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('No map server answered.');
+}
 
 /** Normalize an Overpass element into a place. */
 export function placeFromElement(el) {
