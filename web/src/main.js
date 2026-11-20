@@ -362,7 +362,7 @@ function renderVenues(state) {
                 </li>`;
               })
               .join('')}</ul>`
-          : `<div class="empty">You haven't added any venues yet. Try <button class="link" data-action="example" data-url="https://www.finnriver.com/farm-music-event-calendar">Finnriver's music calendar</button>.</div>`
+          : `<div class="empty">You haven't added any venues yet. Paste the events or calendar page of a local business above to get started.</div>`
       }
     </section>`;
 }
@@ -500,11 +500,6 @@ document.addEventListener('click', async (e) => {
           await store.removeVenue(el.dataset.id);
         }
         return;
-      case 'example': {
-        const input = document.querySelector('.add-venue input[name=url]');
-        if (input) input.value = el.dataset.url;
-        return;
-      }
       case 'signout':
         await signOut(auth);
         return;
