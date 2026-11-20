@@ -30,6 +30,8 @@ const options = {
   minify: !watch,
   sourcemap: true,
   target: ['es2020'],
+  // Leaflet's stylesheet (bundled into app.css) references a few small images.
+  loader: { '.png': 'dataurl', '.svg': 'dataurl' },
   logLevel: 'info',
   plugins: [{ name: 'static', setup: (b) => b.onEnd(copyStatic) }],
 };

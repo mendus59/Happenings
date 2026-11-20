@@ -70,7 +70,31 @@ test('reviews are private and only allow known states', async () => {
   await assertFails(setDoc(ref(bob, 'alice'), { state: 'hidden', venueId: VID, eventId: 'e1' }));
 });
 
-test('user root docs and unknown collections are closed', async () => {
+test('profiles are private and validated', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  const bob = env.authenticatedContext('bob').firestore();
+  const ok = { homeLabel: 'Port Orchard, WA', boxS: 47.4, boxW: -122.8, boxN: 47.8, boxE: -122.45, suggestions: true };
+  await assertSucceeds(setDoc(doc(alice, 'users', 'alice'), ok));
+  await assertSucceeds(getDoc(doc(alice, 'users', 'alice')));
+  await assertSucceeds(setDoc(doc(alice, 'users', 'alice'), { suggestions: false }, { merge: true }));
+  await assertFails(getDoc(doc(bob, 'users', 'alice')));
+  await assertFails(setDoc(doc(bob, 'users', 'alice'), ok));
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxN: 50 })); // too tall
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxE: -123 })); // east of west edge
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxS: 'here' }));
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { homeLabel: 'x', boxS: 47.4 })); // partial box
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, homeLat: 47.5 })); // exact points not stored
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, admin: true }));
+});
+
+test('area changes are readable when signed in, never writable', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  await assertSucceeds(getDocs(collection(alice, 'areas', 'a_1', 'changes')));
+  await assertFails(setDoc(doc(alice, 'areas', 'a_1', 'changes', 'x'), { name: 'fake' }));
+  await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(), 'areas', 'a_1', 'changes')));
+});
+
+test('unknown collections are closed', async () => {
   const alice = env.authenticatedContext('alice').firestore();
   await assertFails(setDoc(doc(alice, 'users', 'alice'), { x: 1 }));
   await assertFails(setDoc(doc(alice, 'users', 'alice', 'secrets', 'a'), { x: 1 }));

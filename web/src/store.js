@@ -9,9 +9,12 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
+  orderBy,
+  limit,
 } from 'firebase/firestore';
 import { db } from './firebase.js';
 import { normalizeVenueUrl, venueIdFor } from '../../shared/url.js';
+import { areaFor, normalizeBox, profileBox } from '../../shared/geo.js';
 
 export const REVIEW_STATES = ['interested', 'favorite', 'hidden'];
 
@@ -22,10 +25,34 @@ export function createStore(uid, onChange) {
     venues: new Map(), // venueId -> venue doc
     events: new Map(), // venueId -> Map(eventId -> event)
     reviews: new Map(), // `${venueId}__${eventId}` -> state
+    profile: null, // { homeLabel, boxS, boxW, boxN, boxE, suggestions }
+    area: null,
+    areaChanges: [],
     error: null,
   };
   const venueUnsubs = new Map();
-  let pending = 2;
+  let pending = 3;
+  let areaUnsub = null;
+  let areaId = null;
+  function watchArea() {
+    const p = state.profile;
+    const next = areaFor(profileBox(p));
+    if ((next?.id || null) === areaId) return;
+    areaUnsub?.();
+    areaUnsub = null;
+    areaId = next?.id || null;
+    state.area = next;
+    state.areaChanges = [];
+    if (!next) return;
+    areaUnsub = onSnapshot(
+      query(collection(db, 'areas', next.id, 'changes'), orderBy('detectedAt', 'desc'), limit(300)),
+      (snap) => {
+        state.areaChanges = snap.docs.map((d) => ({ id: d.id, ...d.data(), detectedAt: d.data().detectedAt?.toDate?.() || null }));
+        changed();
+      },
+      fail,
+    );
+  }
   const ready = () => {
     if (pending > 0 && --pending === 0) state.loading = false;
   };
@@ -102,6 +129,17 @@ export function createStore(uid, onChange) {
     fail,
   );
 
+  const unsubProfile = onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      state.profile = snap.exists() ? snap.data() : null;
+      watchArea();
+      ready();
+      changed();
+    },
+    fail,
+  );
+
   const unsubReviews = onSnapshot(
     collection(db, 'users', uid, 'reviews'),
     (snap) => {
@@ -150,7 +188,23 @@ export function createStore(uid, onChange) {
       changed();
       await setDoc(ref, { state: reviewState, venueId: ev.venueId, eventId: ev.id, updatedAt: serverTimestamp() });
     },
+    async saveProfile({ homeLabel, box, suggestions }) {
+      const data = { updatedAt: serverTimestamp() };
+      if (homeLabel !== undefined) data.homeLabel = String(homeLabel).slice(0, 120);
+      if (box !== undefined) {
+        const b = normalizeBox(box);
+        if (!b) throw new Error('That area is too small. Drag the corners out a bit.');
+        Object.assign(data, { boxS: b.s, boxW: b.w, boxN: b.n, boxE: b.e });
+      }
+      if (suggestions !== undefined) data.suggestions = !!suggestions;
+      await setDoc(doc(db, 'users', uid), data, { merge: true });
+    },
+    async clearHome() {
+      await deleteDoc(doc(db, 'users', uid));
+    },
     stop() {
+      unsubProfile();
+      areaUnsub?.();
       unsubSubs();
       unsubReviews();
       for (const u of venueUnsubs.values()) u();

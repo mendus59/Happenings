@@ -1,0 +1,32 @@
+name: Nearby openings and closings
+
+on:
+  schedule:
+    # Daily at ~6:40 AM Pacific. The license feed only keeps about a week of notices;
+    # the map comparison inside runs once every 28 days per area.
+    - cron: '40 14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local
+  cancel-in-progress: false
+
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check license notices and map changes
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: node scraper/src/local/index.js

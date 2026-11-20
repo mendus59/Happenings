@@ -63,4 +63,5 @@ jobs:
         run: |
           if [ "$(date -u +%u%H)" = "103" ]; then
             gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scrape.yml/enable" || true
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/local.yml/enable" || true
           fi

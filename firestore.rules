@@ -16,6 +16,16 @@ service cloud.firestore {
       return v is timestamp;
     }
 
+    // Either no box at all, or all four edges forming a sane rectangle no bigger than
+    // 1.0° tall by 1.5° wide (matches MAX_BOX in shared/geo.js, plus rounding slack).
+    function validBox(d) {
+      return (!('boxS' in d) && !('boxW' in d) && !('boxN' in d) && !('boxE' in d))
+        || (d.boxS is number && d.boxW is number && d.boxN is number && d.boxE is number
+          && d.boxS >= -90 && d.boxN <= 90 && d.boxW >= -180 && d.boxE <= 180
+          && d.boxN > d.boxS && d.boxE > d.boxW
+          && d.boxN - d.boxS <= 1.01 && d.boxE - d.boxW <= 1.51);
+    }
+
     match /venues/{venueId} {
       allow read: if signedIn();
       allow write: if false;
@@ -26,8 +36,24 @@ service cloud.firestore {
       }
     }
 
+    // Shared per-area openings/closings, written by the daily job.
+    match /areas/{areaId} {
+      allow read: if signedIn();
+      allow write: if false;
+      match /changes/{changeId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+    }
+
     match /users/{uid} {
-      allow read, write: if false;
+      // Profile: home area as a map rectangle (edges rounded to ~1 km) and preferences.
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['homeLabel', 'boxS', 'boxW', 'boxN', 'boxE', 'suggestions', 'updatedAt'])
+        && (!('homeLabel' in request.resource.data) || (request.resource.data.homeLabel is string && request.resource.data.homeLabel.size() <= 120))
+        && validBox(request.resource.data)
+        && (!('suggestions' in request.resource.data) || request.resource.data.suggestions is bool);
 
       // Venues this user follows. Doc id = venue id derived from the URL.
       match /subscriptions/{venueId} {

@@ -66,6 +66,15 @@ After merging to `main`, the app is live at **https://mendus59.github.io/Happeni
 events right away instead of waiting for the hourly run: *Actions → Sync venue events → Run
 workflow*.
 
+## Nearby (location features)
+
+The **Nearby** tab lets each person draw a box on the map around the places they actually go (a box rather than a radius, so water or mountains can be left out). Only the box edges are saved, rounded to about 1 km. Everything uses free, public data:
+
+- **Map and places**: OpenStreetMap tiles, the Overpass API for places, and Nominatim for town search. Click a place with a website to start tracking its events.
+- **Openings**: Washington State Liquor and Cannabis Board license notices ([data.wa.gov](https://data.wa.gov/d/vgcw-qfjm)), checked daily by `.github/workflows/local.yml`. Most new restaurants, bars, breweries and wineries file one before opening. This only covers Washington.
+- **Closings**: there is no free closure registry, so closings come from three signals: a "we're closing" notice on a tracked venue's own site, a tracked site that has been unreachable for several days, and places that disappear from or are marked closed on OpenStreetMap (compared every 28 days).
+- **Suggestions** (opt in): places with websites inside the box, ranked by how much they resemble the venues and events you already track.
+
 ## Free-tier budget
 
 | Service | Free limit | Typical use |
