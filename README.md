@@ -58,9 +58,9 @@ Repo → *Settings → Secrets and variables → Actions* → **New repository s
 Repo → *Settings → Pages* → *Build and deployment* → Source: **GitHub Actions**.
 
 **6. Publish the security rules**
-The Deploy workflow publishes `firestore.rules` automatically once the secret exists. If that
-job shows a permissions warning, paste the file into *Firestore Database → Rules* → **Publish**
-instead.
+*Firestore Database → Rules* → paste the contents of `firestore.rules` → **Publish**. Do this
+again whenever that file changes. (The scraper's service account can't publish rules on its own,
+so this stays a manual step.)
 
 After merging to `main`, the app is live at **https://mendus59.github.io/Happenings/**. To get
 events right away instead of waiting for the hourly run: *Actions → Sync venue events → Run
