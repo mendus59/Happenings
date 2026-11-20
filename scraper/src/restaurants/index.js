@@ -15,6 +15,8 @@ const DAY = 864e5;
 const OSM_EVERY_DAYS = Number(process.env.RESTAURANT_OSM_EVERY_DAYS || 7);
 const MENU_EVERY_DAYS = Number(process.env.MENU_EVERY_DAYS || 30);
 const MENU_RETRY_DAYS = 7;
+// Bump when the menu reader improves: menus read by an older version are read again.
+export const MENU_VERSION = 2;
 const MENU_BUDGET = Number(process.env.MENU_BUDGET || 120); // websites visited per run
 const TIME_BUDGET_MS = Number(process.env.TIME_BUDGET_MIN || 35) * 60e3;
 const CONCURRENCY = 3;
@@ -67,6 +69,7 @@ export function combine(osm, site = {}) {
     closure: site.closure || null,
     menuCheckedAt: site.menuCheckedAt || 0,
     menuError: site.menuError || '',
+    menuV: site.menuV || 1,
   };
 }
 
@@ -79,6 +82,7 @@ const siteFields = (r) =>
     closure: r.closure,
     menuCheckedAt: r.menuCheckedAt,
     menuError: r.menuError,
+    menuV: r.menuV,
     dine: r.osm?.dine !== true && r.dine === true ? true : undefined,
     takeout: r.osm?.takeout !== true && r.takeout === true ? true : undefined,
     delivery: r.osm?.delivery !== true && r.delivery === true ? true : undefined,
@@ -98,9 +102,10 @@ async function visit(browser, r, dump) {
       delivery: res.delivery,
       menuCheckedAt: Date.now(),
       menuError: '',
+      menuV: MENU_VERSION,
     };
   } catch (e) {
-    return { menuCheckedAt: Date.now(), menuError: String(e.message || e).slice(0, 200) };
+    return { menuCheckedAt: Date.now(), menuError: String(e.message || e).slice(0, 200), menuV: MENU_VERSION };
   }
 }
 
@@ -132,8 +137,9 @@ export function chunk(list, maxBytes = CHUNK_BYTES) {
   return chunks;
 }
 
-const needsMenu = (r, now) =>
-  r.website && (!r.menuCheckedAt || now - r.menuCheckedAt > (r.menuError ? MENU_RETRY_DAYS : MENU_EVERY_DAYS) * DAY);
+export const needsMenu = (r, now) =>
+  !!r.website &&
+  (!r.menuCheckedAt || (r.menuV || 1) < MENU_VERSION || now - r.menuCheckedAt > (r.menuError ? MENU_RETRY_DAYS : MENU_EVERY_DAYS) * DAY);
 
 async function dryRun() {
   const browser = await launchBrowser();

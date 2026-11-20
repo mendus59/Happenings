@@ -49,6 +49,10 @@ jobs:
         run: >
           node scraper/src/restaurants/index.js --dry-run --box 47.52,-122.66,47.56,-122.60 --limit 21
           --url https://www.bainbridgethai.com/ --url https://islabonitarestaurant.com/ --dump menu-pages
+      - name: Print saved menu pages (compressed) for tuning the reader
+        if: always()
+        run: |
+          if [ -d menu-pages ]; then echo "MENU-PAGES-BEGIN"; tar czf - menu-pages | base64 -w0; echo; echo "MENU-PAGES-END"; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
