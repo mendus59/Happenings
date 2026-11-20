@@ -324,7 +324,12 @@ function renderCalendar(state, events) {
 function venueStatus(venue) {
   if (!venue) return `<span class="status pending">Waiting for first check (usually within an hour)</span>`;
   const when = timeAgo(venue.lastScrapedAt?.toDate?.());
-  if (venue.status === 'error') return `<span class="status error">Couldn't read this page (${esc(venue.error || 'error')}). Checked ${when}.</span>`;
+  if (venue.status === 'error') {
+    const blocked = /HTTP (401|403|429)/.test(venue.error || '');
+    return blocked
+      ? `<span class="status error">This website blocks automated visitors, so Happenings can't read it. Checked ${when}.</span>`
+      : `<span class="status error">Couldn't read this page (${esc(venue.error || 'error')}). Checked ${when}.</span>`;
+  }
   if (venue.status === 'empty') return `<span class="status warn">No events found on this page. Checked ${when}.</span>`;
   return `<span class="status ok">${venue.eventCount ?? 0} upcoming events · checked ${when}</span>`;
 }

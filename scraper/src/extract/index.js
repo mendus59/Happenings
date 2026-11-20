@@ -5,6 +5,7 @@ import { extractIcal } from './ical.js';
 import { extractAcuity } from './acuity.js';
 import { extractSquarespace, extractTribe } from './platforms.js';
 import { extractHeuristic } from './heuristic.js';
+import { extractCaptions } from './captions.js';
 
 const REMOTE_EXTRACTORS = [
   ['ical', extractIcal],
@@ -38,6 +39,9 @@ export async function extractFromPage(ctx) {
     } catch (e) {
       ctx.log(`  ${name} failed: ${e.message}`);
     }
+  }
+  if (raw.length === 0) {
+    for (const d of docs) add('captions', extractCaptions(d.html, { tz: ctx.tz, baseUrl: d.url }));
   }
   if (raw.length === 0) {
     for (const d of docs) add('heuristic', extractHeuristic(d.html, { tz: ctx.tz, baseUrl: d.url }));

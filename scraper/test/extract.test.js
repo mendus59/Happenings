@@ -139,3 +139,30 @@ test('every scraper category has display info in the web app', async () => {
   for (const c of CATEGORIES) assert.ok(CATEGORY_INFO[c.id], c.id);
   assert.ok(CATEGORY_INFO.other);
 });
+
+test('captions: Instagram feed posts (Bushel & Barrel)', async () => {
+  const { extractCaptions, parseTimes } = await import('../src/extract/captions.js');
+  const html = readFileSync(new URL('./fixtures/bushel-barrel.rendered.html', import.meta.url), 'utf8');
+  const baseUrl = 'https://bushelandbarrelciderhouse.com/calendar-events-poulsbo-wa';
+  const raw = extractCaptions(html, { tz: TZ, now: new Date('2026-11-20T21:00:00Z'), baseUrl });
+  const evs = raw.map((r) => normalizeEvent(r, { ...ctx, baseUrl }));
+  const find = (t) => evs.find((e) => e.title === t);
+
+  const irish = evs.filter((e) => e.title === 'Irish Music Circle');
+  assert.equal(irish.length, 2); // Nov 15 and Nov 22, each announced once
+  assert.equal(find('Globe Tilt Trivia').category, 'trivia');
+  const paint = find('Chainsaw Carved Mushroom Paint with Jess Ensslen!');
+  assert.equal(paint.start.toISOString(), '2026-11-28T22:00:00.000Z'); // 2 PM PST
+  assert.equal(paint.end.toISOString(), '2026-11-29T00:00:00.000Z');
+  assert.match(paint.url, /instagram\.com\/p\//);
+  // Announced in two posts with different wording, kept once.
+  assert.equal(evs.filter((e) => e.start.toISOString() === '2026-11-14T02:00:00.000Z').length, 1);
+  // "Purchase tickets by November 10th, ..." is a sentence, not an event.
+  assert.ok(!evs.some((e) => /purchase/i.test(e.title)));
+  // "Friday Hours: 4–9 PM" is opening hours, not an event.
+  assert.ok(!evs.some((e) => /hours/i.test(e.title)));
+
+  assert.deepEqual(parseTimes('NOON–9 PM').start, { h: 12, m: 0, mer: 'pm' });
+  assert.equal(parseTimes('Irish Music 1-4pm').start.h, 13);
+  assert.equal(parseTimes('11–2 PM').start.h, 11);
+});
