@@ -1,1 +1,103 @@
 # Happenings
+
+One calendar for the events at the small businesses and venues you love.
+
+Save the events page of any venue (a cidery's music calendar, a foraging guide's tour
+bookings, a bookstore's readings…). Happenings checks those pages every few hours and
+gathers everything into a single list and calendar. New events are highlighted until you
+review them: mark them **Interested**, **Favorite**, or **Hide** them. Events are sorted into
+types (Live Music, Comedy, Workshops, Markets…) so you can filter to what you like.
+
+Everything runs on free tiers: GitHub Pages hosts the app, GitHub Actions does the
+scraping, and Firebase (Spark plan) handles sign-in and data.
+
+## How it works
+
+```
+ venue websites ──► GitHub Actions (hourly) ──► Firestore ◄── web app on GitHub Pages
+                    headless Chromium scraper    venues/{id}/events     (signed-in users)
+                                                 users/{uid}/...
+```
+
+- **Scraper** (`scraper/`): a scheduled GitHub Actions job loads each saved page in headless
+  Chromium (so JavaScript calendar widgets render), then pulls events out using, in order:
+  schema.org JSON-LD and microdata, iCal feeds and Google Calendar embeds, Acuity Scheduling
+  classes, Squarespace event collections, WordPress "The Events Calendar", and finally a
+  text heuristic. If you paste a homepage, it follows likely "Events / Calendar / Tours" links.
+  Each event is auto-categorized by keywords.
+- **Sync**: new events are added, changed ones updated, and future events that vanish from the
+  venue's page are marked *removed* (you'll still see them, struck through, if you'd marked
+  them Interested or Favorite, so you know a plan changed). Old events are purged after 30 days.
+- **Web app** (`web/`): plain JavaScript bundled with esbuild. Reads live from Firestore.
+- **Security** (`firestore.rules`): venue/event data is read-only to signed-in users and written
+  only by the scraper. Each user's saved venues and review states are private to them.
+
+Venue data is shared: if two people save the same page it's only scraped once.
+
+## One-time setup
+
+These need your hands in the GitHub and Firebase consoles (about 10 minutes).
+
+**1. Firebase: create the database**
+Firebase console → *Build → Firestore Database* → **Create database** → Production mode → pick a
+US location (e.g. `us-west1`). Stay on the free Spark plan.
+
+**2. Firebase: turn on sign-in**
+*Build → Authentication* → **Get started** → *Sign-in method* → enable **Google** and
+**Email/Password**. Then *Settings → Authorized domains* → **Add domain** → `mendus59.github.io`.
+
+**3. Firebase: create a service account key for the scraper**
+⚙️ *Project settings → Service accounts* → **Generate new private key**. A JSON file downloads.
+Keep it private; don't commit it.
+
+**4. GitHub: add the key as a secret**
+Repo → *Settings → Secrets and variables → Actions* → **New repository secret** → Name
+`FIREBASE_SERVICE_ACCOUNT`, value: paste the entire contents of that JSON file.
+
+**5. GitHub: turn on Pages**
+Repo → *Settings → Pages* → *Build and deployment* → Source: **GitHub Actions**.
+
+**6. Publish the security rules**
+The Deploy workflow publishes `firestore.rules` automatically once the secret exists. If that
+job shows a permissions warning, paste the file into *Firestore Database → Rules* → **Publish**
+instead.
+
+After merging to `main`, the app is live at **https://mendus59.github.io/Happenings/**. To get
+events right away instead of waiting for the hourly run: *Actions → Sync venue events → Run
+workflow*.
+
+## Free-tier budget
+
+| Service | Free limit | Typical use |
+| --- | --- | --- |
+| GitHub Actions | Unlimited minutes for public repos | ~1–3 min per run, hourly |
+| GitHub Pages | 100 GB/month bandwidth | ~200 KB per visit |
+| Firestore (Spark) | 50k reads, 20k writes per day | writes only when events change |
+| Firebase Auth | 50k monthly active users | |
+
+The scraper only writes when something actually changed, scans at most 60 venues per run, and
+re-reads each venue every 6 hours (`SCRAPE_INTERVAL_HOURS` in `scrape.yml`).
+
+## Development
+
+```sh
+npm install
+npm test             # scraper + URL unit tests
+npm run test:rules   # security rules tests against the Firestore emulator (needs Java)
+npm run build        # bundle the web app into web/dist
+
+# Try the whole app locally with demo data, no production access needed:
+npx firebase-tools emulators:start --only auth,firestore   # terminal 1
+npm run seed && npm run dev                                 # terminal 2
+# open http://localhost:5173/?emulator and sign in as demo@example.com / demo-password
+
+# See what the scraper finds on any page (no Firestore):
+npx playwright install chromium
+npm run scrape:dry -- --url https://www.finnriver.com/farm-music-event-calendar
+```
+
+### Adding support for another site
+
+If a venue's events aren't picked up, run the dry-run command above on its URL. Most fixes
+are a new adapter in `scraper/src/extract/` (see `acuity.js` for an example) plus a fixture
+test in `scraper/test/`. Category keywords live in `scraper/src/categorize.js`.
