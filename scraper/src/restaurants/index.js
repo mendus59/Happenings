@@ -29,6 +29,7 @@ const { values: args } = parseArgs({
     box: { type: 'string' },
     url: { type: 'string', multiple: true },
     limit: { type: 'string', default: '6' },
+    dump: { type: 'string' }, // folder to save each page read (for improving the menu reader)
   },
 });
 const log = (...a) => console.log(...a);
@@ -83,9 +84,9 @@ const siteFields = (r) =>
     delivery: r.osm?.delivery !== true && r.delivery === true ? true : undefined,
   };
 
-async function visit(browser, r) {
+async function visit(browser, r, dump) {
   try {
-    const res = await scrapeMenu(browser, r, { log: () => {} });
+    const res = await scrapeMenu(browser, r, { log: () => {}, dump });
     return {
       m: res.items,
       menuUrl: res.menuUrl,
@@ -148,9 +149,19 @@ async function dryRun() {
       list = list.filter((r) => r.website).slice(0, Number(args.limit));
     }
     for (const url of args.url || []) list.push({ id: 'cli', name: url, website: url });
+    let dump;
+    if (args.dump) {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(args.dump, { recursive: true });
+      let n = 0;
+      dump = (url, ext, content) => {
+        const name = `${String(++n).padStart(3, '0')}-${url.replace(/^https?:\/\//, '').replace(/[^a-z0-9]+/gi, '_').slice(0, 80)}.${ext}`;
+        writeFileSync(`${args.dump}/${name}`, content || '');
+      };
+    }
     for (const r of list) {
       const t0 = Date.now();
-      const site = await visit(browser, r);
+      const site = await visit(browser, r, dump);
       const c = combine(r, site);
       log(`\n${r.name} — ${r.website} (${((Date.now() - t0) / 1000).toFixed(0)}s)`);
       if (site.menuError) log(`  error: ${site.menuError}`);
