@@ -232,7 +232,8 @@ function renderHead(ctx) {
     const d = rs.draft;
     el.innerHTML = `<div class="nb-area-form editing">
       <div class="nb-area-title"><h2>Draw your restaurant areas</h2>
-        <p class="hint">Each way of eating gets its own box. Pick one below, then drag its corners (or the ✥ to move it).
+        <p class="hint">Each way of eating gets its own area. Pick one below, then drag its corners. Drag a small dot on an edge
+          to add a corner, double-click (or long-press) a corner to remove it, and drag the ✥ to move it.
           Leave out places that are close on the map but slow to reach.</p></div>
       <form class="filter-row" data-action="rs-find">
         <input name="place" type="text" placeholder="Jump to a town" aria-label="Town or address">
@@ -246,7 +247,7 @@ function renderHead(ctx) {
         ).join('')}
       </div>
       <div class="filter-row">
-        <button type="button" data-action="rs-use-view">Fit ${esc(MODES[d.editing].label.toLowerCase())} box to the map view</button>
+        <button type="button" data-action="rs-use-view">Fit ${esc(MODES[d.editing].label.toLowerCase())} area to the map view</button>
         <button type="button" class="primary" data-action="rs-save-boxes" ${rs.busy ? 'disabled' : ''}>Save areas</button>
         ${hasBoxes(state) ? '<button type="button" class="link" data-action="rs-cancel">Cancel</button>' : ''}
       </div>

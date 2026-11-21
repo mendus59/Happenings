@@ -8,13 +8,14 @@ import {
   setDoc,
   deleteDoc,
   serverTimestamp,
+  deleteField,
   Timestamp,
   orderBy,
   limit,
 } from 'firebase/firestore';
 import { db } from './firebase.js';
 import { normalizeVenueUrl, venueIdFor } from '../../shared/url.js';
-import { normalizeBox, profileBox } from '../../shared/geo.js';
+import { flatPoints, normalizeBox, profileBox, storedBox } from '../../shared/geo.js';
 import { areasForBoxes, MODE_IDS, RATINGS } from '../../shared/restaurants.js';
 
 export const REVIEW_STATES = ['interested', 'favorite', 'hidden'];
@@ -220,9 +221,9 @@ export function createStore(uid, onChange) {
     (snap) => {
       state.rBoxes = new Map(
         snap.docs.filter((d) => MODE_IDS.includes(d.id)).map((d) => {
-          const { s, w, n, e } = d.data();
-          return [d.id, { s, w, n, e }];
-        }),
+          const { s, w, n, e, pts } = d.data();
+          return [d.id, storedBox(s, w, n, e, pts)];
+        }).filter(([, b]) => b),
       );
       watchChanges();
       watchRestaurants();
@@ -286,7 +287,7 @@ export function createStore(uid, onChange) {
       if (box !== undefined) {
         const b = normalizeBox(box);
         if (!b) throw new Error('That area is too small. Drag the corners out a bit.');
-        Object.assign(data, { boxS: b.s, boxW: b.w, boxN: b.n, boxE: b.e });
+        Object.assign(data, { boxS: b.s, boxW: b.w, boxN: b.n, boxE: b.e, boxPts: b.pts ? flatPoints(b.pts) : deleteField() });
       }
       if (suggestions !== undefined) data.suggestions = !!suggestions;
       await setDoc(doc(db, 'users', uid), data, { merge: true });
@@ -297,7 +298,9 @@ export function createStore(uid, onChange) {
         if (!MODE_IDS.includes(mode)) continue;
         const b = normalizeBox(box);
         if (!b) throw new Error(`The ${mode} area is too small. Drag its corners out a bit.`);
-        await setDoc(doc(db, 'users', uid, 'restaurantAreas', mode), { ...b, updatedAt: serverTimestamp() });
+        const data = { s: b.s, w: b.w, n: b.n, e: b.e, updatedAt: serverTimestamp() };
+        if (b.pts) data.pts = flatPoints(b.pts);
+        await setDoc(doc(db, 'users', uid, 'restaurantAreas', mode), data);
       }
     },
     /** Toggle favorite / disliked for one way of eating at a restaurant. */

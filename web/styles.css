@@ -262,8 +262,8 @@ button.link.muted { color: var(--muted); }
 .leaflet-container { font: inherit; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); }
 .nb-handle { background: #fff; border: 3px solid var(--box-color, #2f6b4f); border-radius: 4px; box-shadow: 0 1px 4px rgb(0 0 0 / 35%); }
-.nb-handle.nb-sw, .nb-handle.nb-ne { cursor: nesw-resize; }
-.nb-handle.nb-nw, .nb-handle.nb-se { cursor: nwse-resize; }
+.nb-handle.nb-vertex { cursor: grab; }
+.nb-handle.nb-mid { border-width: 2px; border-radius: 50%; opacity: 0.85; cursor: copy; }
 .nb-handle.nb-move { border-radius: 50%; cursor: move; display: grid; place-items: center; font-size: 15px; line-height: 1; color: var(--box-color, #2f6b4f); }
 
 /* ---------- restaurants ---------- */
