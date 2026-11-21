@@ -28,6 +28,8 @@ const MENU_RETRY_DAYS = 7;
 export const MENU_VERSION = 2;
 const MENU_BUDGET = Number(process.env.MENU_BUDGET || 120); // websites visited per run
 const TIME_BUDGET_MS = Number(process.env.TIME_BUDGET_MIN || 35) * 60e3;
+const VISIT_LIMIT_MS = 120e3; // give up on one website after this, so one bad site can't stall the run
+const SAVE_EVERY = 20; // save progress after this many websites
 const LICENSE_KEEP_DAYS = 365; // places known only from a license notice are dropped after this
 const CONCURRENCY = 3;
 const CHUNK_BYTES = 700_000; // Firestore documents max out at 1 MiB
@@ -170,8 +172,14 @@ const siteFields = (r) =>
   };
 
 async function visit(browser, r, dump) {
+  let timer;
   try {
-    const res = await scrapeMenu(browser, r, { log: () => {}, dump });
+    const res = await Promise.race([
+      scrapeMenu(browser, r, { log: () => {}, dump }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`gave up after ${VISIT_LIMIT_MS / 1000}s`)), VISIT_LIMIT_MS);
+      }),
+    ]);
     return {
       m: res.items,
       menuUrl: res.menuUrl,
@@ -187,6 +195,8 @@ async function visit(browser, r, dump) {
     };
   } catch (e) {
     return { menuCheckedAt: Date.now(), menuError: String(e.message || e).slice(0, 200), menuV: MENU_VERSION };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -325,8 +335,40 @@ async function run() {
       }
 
       osmList = withHistory(osmList, existing, notices.filter((n) => inBox(area, n)), { today, osmUpdated });
+      const build = () =>
+        osmList.map((o) => combine(o, visited.get(o.id) || siteFields(existing.get(o.id)))).sort((a, b) => a.name.localeCompare(b.name));
+      let chunkCount = chunkDocs.size;
+      let saving = Promise.resolve();
+      // Save the whole list; called before menus (so the area works right away), during, and after.
+      const save = (list) =>
+        (saving = saving.then(async () => {
+          const chunks = chunk(list);
+          const batch = db.batch();
+          chunks.forEach((c, i) => batch.set(areaRef.collection('chunks').doc(String(i)), { list: c }));
+          for (let i = chunks.length; i < chunkCount; i++) batch.delete(areaRef.collection('chunks').doc(String(i)));
+          chunkCount = chunks.length;
+          batch.set(
+            areaRef,
+            {
+              s: area.s,
+              w: area.w,
+              n: area.n,
+              e: area.e,
+              count: list.length,
+              chunks: chunks.length,
+              withMenu: list.filter((r) => r.m.length).length,
+              licensed: list.filter((r) => r.license).length,
+              updatedAt: FieldValue.serverTimestamp(),
+              ...(osmUpdated ? { lastOsmAt: FieldValue.serverTimestamp() } : {}),
+            },
+            { merge: true },
+          );
+          await batch.commit();
+        }));
+
+      let list = build();
+      await save(list);
       const now = Date.now();
-      let list = osmList.map((o) => combine(o, visited.get(o.id) || siteFields(existing.get(o.id))));
       const todo = list
         .filter((r) => needsMenu(r, now) && !visited.has(r.id))
         .sort((a, b) => (a.menuCheckedAt || 0) - (b.menuCheckedAt || 0))
@@ -334,35 +376,18 @@ async function run() {
       budget -= todo.length;
       if (todo.length && !browser) browser = await launchBrowser();
       let read = 0;
+      let done = 0;
       await pool(todo, CONCURRENCY, async (r) => {
+        const t0 = Date.now();
         const site = await visit(browser, r);
         visited.set(r.id, site);
         if (site.m?.length) read++;
+        log(`    ${r.name}: ${site.m?.length || 0} items${site.menuError ? ` (${site.menuError.slice(0, 60)})` : ''} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+        if (++done % SAVE_EVERY === 0) await save(build());
       });
-      list = osmList.map((o) => combine(o, visited.get(o.id) || siteFields(existing.get(o.id))));
-      list.sort((a, b) => a.name.localeCompare(b.name));
-
-      const chunks = chunk(list);
-      const batch = db.batch();
-      chunks.forEach((c, i) => batch.set(areaRef.collection('chunks').doc(String(i)), { list: c }));
-      for (const d of chunkDocs.docs) if (Number(d.id) >= chunks.length) batch.delete(d.ref);
-      batch.set(
-        areaRef,
-        {
-          s: area.s,
-          w: area.w,
-          n: area.n,
-          e: area.e,
-          count: list.length,
-          chunks: chunks.length,
-          withMenu: list.filter((r) => r.m.length).length,
-          licensed: list.filter((r) => r.license).length,
-          updatedAt: FieldValue.serverTimestamp(),
-          ...(osmUpdated ? { lastOsmAt: FieldValue.serverTimestamp() } : {}),
-        },
-        { merge: true },
-      );
-      await batch.commit();
+      list = build();
+      await save(list);
+      const chunks = { length: chunkCount };
       log(`  ${area.id}: ${list.length} restaurants (${list.filter((r) => r.license).length} with license notices), visited ${todo.length} sites (${read} menus read), ${chunks.length} chunks`);
     }
   } finally {
