@@ -19,6 +19,7 @@
   "dependencies": {
     "cheerio": "1.0.0",
     "chrono-node": "2.7.7",
+    "exceljs": "^4.4.0",
     "firebase-admin": "12.7.0",
     "leaflet": "1.9.4",
     "node-ical": "0.20.1",

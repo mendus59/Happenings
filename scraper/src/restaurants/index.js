@@ -19,6 +19,7 @@ import { inBox, normalizeBox } from '../../../shared/geo.js';
 import { launchBrowser } from '../browser.js';
 import { scrapeMenu } from '../menu/scrapeMenu.js';
 import { fetchLcbOpenings } from '../local/licenses.js';
+import { fetchLicensedPlaces } from '../local/lcbList.js';
 
 const DAY = 864e5;
 const OSM_EVERY_DAYS = Number(process.env.RESTAURANT_OSM_EVERY_DAYS || 7);
@@ -89,6 +90,7 @@ export function combine(osm, site = {}) {
 }
 
 const licenseOf = (n) => ({ date: n.date, type: n.licenseType || 'new', detail: n.detail || '' });
+const LIST_KEEP_DAYS = 45; // a place from the state's licensee list that drops off it is kept this long
 
 /**
  * Pure: carry opening dates forward and fold in liquor-license notices.
@@ -112,25 +114,32 @@ export function withHistory(osmList, existing, notices, { today, osmUpdated }) {
   const newer = (a, b) => !a || String(b.date) > String(a.date);
   const licensed = new Map();
   // Earlier license-only places: hand over to a mapped restaurant, else keep for a while.
+  const age = (d) => (d ? Date.parse(today) - Date.parse(d) : Infinity);
   for (const prev of existing.values()) {
-    if (!String(prev.id).startsWith('r_lcb_') || !prev.license) continue;
+    if (!String(prev.id).startsWith('r_lcb_')) continue;
     const m = matchLicense(list, prev);
     if (m) {
-      if (newer(m.license, prev.license)) m.license = prev.license;
-    } else if (Date.parse(today) - Date.parse(prev.license.date) <= LICENSE_KEEP_DAYS * DAY) {
+      if (prev.license && newer(m.license, prev.license)) m.license = prev.license;
+    } else if (age(prev.license?.date) <= LICENSE_KEEP_DAYS * DAY || age(prev.listedAt) <= LIST_KEEP_DAYS * DAY) {
       licensed.set(prev.id, { ...prev });
     }
   }
   for (const n of notices) {
-    if (!n.date || !n.license) continue;
+    if (!n.license) continue;
     const m = matchLicense(list, n);
     if (m) {
-      if (newer(m.license, n)) m.license = licenseOf(n);
+      if (n.date && newer(m.license, n)) m.license = licenseOf(n);
       continue;
     }
     const id = licenseRestaurantId(n);
     const prev = licensed.get(id);
-    if (prev && !newer(prev.license, n)) continue;
+    // Only restaurants (not bars or breweries) become restaurant entries.
+    if (!prev && n.kind && n.kind !== 'restaurant') continue;
+    if (prev) {
+      if (n.date && newer(prev.license, n)) prev.license = licenseOf(n);
+      if (n.status) Object.assign(prev, { licStatus: n.status, listedAt: today });
+      continue;
+    }
     licensed.set(id, {
       id,
       name: n.name,
@@ -150,7 +159,8 @@ export function withHistory(osmList, existing, notices, { today, osmUpdated }) {
       menuUrl: '',
       since: '',
       fromLicense: true,
-      license: licenseOf(n),
+      ...(n.date ? { license: licenseOf(n) } : {}),
+      ...(n.status ? { licStatus: n.status, listedAt: today } : {}),
     });
   }
   return [...list, ...licensed.values()];
@@ -305,7 +315,7 @@ async function run() {
     log(`quick: ${todoAreas.length} new areas`);
     if (!todoAreas.length) return;
   }
-  const notices = await fetchLcbOpenings(log);
+  const notices = [...(await fetchLcbOpenings(log)), ...(await fetchLicensedPlaces(db, log))];
   const today = new Date().toISOString().slice(0, 10);
   let browser = null;
   const visited = new Map(); // restaurant id -> site fields (shared across overlapping areas)

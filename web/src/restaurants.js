@@ -440,11 +440,12 @@ function cardHtml(state, { r, dishes }, boxes) {
       <h3>${esc(r.name)}</h3>
       ${unrated ? '<span class="pill new">Unrated</span>' : ''}
       ${opened.fresh ? '<span class="pill open">New</span>' : ''}
-      ${r.fromLicense ? '<span class="pill soon" title="Known from a liquor-license notice; not on the map yet">Coming soon?</span>' : ''}
+      ${r.fromLicense && (r.licStatus === 'pending' || (!r.licStatus && r.license)) ? '<span class="pill soon" title="Applied for a liquor license; not open or not on the map yet">Coming soon?</span>' : ''}
       ${r.closure ? '<span class="pill close" title="Their website mentions closing">Closing?</span>' : ''}
     </div>
     <div class="sub">${meta || esc(PLACE_KINDS[r.kind]?.label || 'Restaurant')}</div>
     ${opened.html}
+    ${r.fromLicense ? '<div class="sub">From Washington liquor-license records (not on OpenStreetMap yet)</div>' : ''}
     ${dishes.length ? `<div class="rs-dishes">${dishes.map((d) => `<span>${esc(d.n)}${d.p != null ? ` <b>$${d.p.toFixed(d.p % 1 ? 2 : 0)}</b>` : ''}</span>`).join('')}</div>` : ''}
     <div class="rs-modes">${MODE_IDS.map((m) => modeRow(state, r, m, inBox(boxes[m], r))).join('')}</div>
     ${linksHtml(r)}

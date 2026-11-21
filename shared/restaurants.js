@@ -123,13 +123,13 @@ export function sameName(a, b) {
   return shared / Math.min(x.length, y.length) >= 0.6 || x.join('') === y.join('');
 }
 
-/** The restaurant a liquor-license notice belongs to: similar name, within about 250 m. */
+/** The restaurant a liquor-license notice belongs to: similar name, within about 400 m (geocoded addresses can be a little off). */
 export function matchLicense(list, notice) {
   let best = null;
   for (const r of list) {
     if (String(r.id).startsWith('r_lcb_')) continue;
     const d = distanceKm(r, notice);
-    if (d <= 0.25 && sameName(r.name, notice.name) && (!best || d < best.d)) best = { r, d };
+    if (d <= 0.4 && sameName(r.name, notice.name) && (!best || d < best.d)) best = { r, d };
   }
   return best?.r || null;
 }
