@@ -99,11 +99,12 @@ service cloud.firestore {
           });
       }
 
-      // Favorite / disliked per way of eating. Doc id = restaurant id (r_node_123).
+      // Favorite / disliked per way of eating. Doc id = restaurant id (r_node_123, or r_lcb_123
+      // for a place known only from a liquor-license notice).
       match /restaurantRatings/{rid} {
         allow read, delete: if isOwner(uid);
         allow create, update: if isOwner(uid)
-          && rid.matches('r_(node|way|relation)_[0-9]{1,15}')
+          && rid.matches('r_(node|way|relation|lcb)_[0-9]{1,15}')
           && request.resource.data.keys().hasOnly(['dine', 'takeout', 'delivery', 'name', 'updatedAt'])
           && (!('dine' in request.resource.data) || request.resource.data.dine in ['fav', 'dislike'])
           && (!('takeout' in request.resource.data) || request.resource.data.takeout in ['fav', 'dislike'])

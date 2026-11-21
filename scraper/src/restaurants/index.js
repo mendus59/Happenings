@@ -5,11 +5,20 @@
 //   node scraper/src/restaurants/index.js --dry-run --box 47.50,-122.70,47.58,-122.58 --limit 8
 //   node scraper/src/restaurants/index.js --dry-run --url https://example-restaurant.com/
 import { parseArgs } from 'node:util';
-import { areasForBoxes, restaurantQuery, restaurantFromElement, priceLevel, MODE_IDS } from '../../../shared/restaurants.js';
+import {
+  areasForBoxes,
+  restaurantQuery,
+  restaurantFromElement,
+  priceLevel,
+  matchLicense,
+  licenseRestaurantId,
+  MODE_IDS,
+} from '../../../shared/restaurants.js';
 import { fetchOverpass } from '../../../shared/places.js';
-import { normalizeBox } from '../../../shared/geo.js';
+import { inBox, normalizeBox } from '../../../shared/geo.js';
 import { launchBrowser } from '../browser.js';
 import { scrapeMenu } from '../menu/scrapeMenu.js';
+import { fetchLcbOpenings } from '../local/licenses.js';
 
 const DAY = 864e5;
 const OSM_EVERY_DAYS = Number(process.env.RESTAURANT_OSM_EVERY_DAYS || 7);
@@ -19,6 +28,7 @@ const MENU_RETRY_DAYS = 7;
 export const MENU_VERSION = 2;
 const MENU_BUDGET = Number(process.env.MENU_BUDGET || 120); // websites visited per run
 const TIME_BUDGET_MS = Number(process.env.TIME_BUDGET_MIN || 35) * 60e3;
+const LICENSE_KEEP_DAYS = 365; // places known only from a license notice are dropped after this
 const CONCURRENCY = 3;
 const CHUNK_BYTES = 700_000; // Firestore documents max out at 1 MiB
 const OVERPASS_UA = 'Happenings/1.0 (+https://github.com/mendus59/Happenings)';
@@ -32,6 +42,9 @@ const { values: args } = parseArgs({
     url: { type: 'string', multiple: true },
     limit: { type: 'string', default: '6' },
     dump: { type: 'string' }, // folder to save each page read (for improving the menu reader)
+    // Only set up areas that have no saved list yet (map + license notices, no menus). Fast,
+    // so it runs hourly and new areas don't wait for the nightly run.
+    quick: { type: 'boolean', default: false },
   },
 });
 const log = (...a) => console.log(...a);
@@ -71,6 +84,74 @@ export function combine(osm, site = {}) {
     menuError: site.menuError || '',
     menuV: site.menuV || 1,
   };
+}
+
+const licenseOf = (n) => ({ date: n.date, type: n.licenseType || 'new', detail: n.detail || '' });
+
+/**
+ * Pure: carry opening dates forward and fold in liquor-license notices.
+ *  - license: the newest notice matched to a restaurant (name + within 250 m)
+ *  - firstSeen: the day a restaurant first showed up on the map (only after the first list)
+ *  - restaurants known only from a notice (not mapped yet) are kept for a year, and handed
+ *    over to the mapped restaurant once it appears.
+ */
+export function withHistory(osmList, existing, notices, { today, osmUpdated }) {
+  const hadList = [...existing.values()].some((r) => !String(r.id).startsWith('r_lcb_'));
+  const list = osmList
+    .filter((o) => !String(o.id).startsWith('r_lcb_'))
+    .map((o) => {
+      const prev = existing.get(o.id);
+      const r = { ...o };
+      if (prev?.license) r.license = prev.license;
+      if (prev?.firstSeen) r.firstSeen = prev.firstSeen;
+      else if (!prev && hadList && osmUpdated) r.firstSeen = today;
+      return r;
+    });
+  const newer = (a, b) => !a || String(b.date) > String(a.date);
+  const licensed = new Map();
+  // Earlier license-only places: hand over to a mapped restaurant, else keep for a while.
+  for (const prev of existing.values()) {
+    if (!String(prev.id).startsWith('r_lcb_') || !prev.license) continue;
+    const m = matchLicense(list, prev);
+    if (m) {
+      if (newer(m.license, prev.license)) m.license = prev.license;
+    } else if (Date.parse(today) - Date.parse(prev.license.date) <= LICENSE_KEEP_DAYS * DAY) {
+      licensed.set(prev.id, { ...prev });
+    }
+  }
+  for (const n of notices) {
+    if (!n.date || !n.license) continue;
+    const m = matchLicense(list, n);
+    if (m) {
+      if (newer(m.license, n)) m.license = licenseOf(n);
+      continue;
+    }
+    const id = licenseRestaurantId(n);
+    const prev = licensed.get(id);
+    if (prev && !newer(prev.license, n)) continue;
+    licensed.set(id, {
+      id,
+      name: n.name,
+      kind: 'restaurant',
+      lat: Number(n.lat.toFixed(6)),
+      lon: Number(n.lon.toFixed(6)),
+      cuisines: [],
+      website: '',
+      phone: '',
+      address: n.address || '',
+      city: '',
+      hours: '',
+      dine: null,
+      takeout: null,
+      delivery: null,
+      orderUrl: '',
+      menuUrl: '',
+      since: '',
+      fromLicense: true,
+      license: licenseOf(n),
+    });
+  }
+  return [...list, ...licensed.values()];
 }
 
 const siteFields = (r) =>
@@ -152,6 +233,11 @@ async function dryRun() {
       log(`Restaurants on the map in the box: ${list.length} (${list.filter((r) => r.website).length} with a website)`);
       const by = (k) => list.filter((r) => r[k] === true).length;
       log(`  Map says: dine-in ${by('dine')}, takeout ${by('takeout')}, delivery ${by('delivery')}`);
+      const notices = (await fetchLcbOpenings(log)).filter((n) => inBox(box, n));
+      const hist = withHistory(list, new Map(), notices, { today: new Date().toISOString().slice(0, 10), osmUpdated: true });
+      log(`  License notices in the box: ${notices.length}`);
+      for (const r of hist.filter((x) => x.license)) log(`   - ${r.license.date} ${r.name}${r.fromLicense ? ' (not on the map yet)' : ''}`);
+      log(`  With an opening date on the map: ${list.filter((r) => r.since).length}`);
       list = list.filter((r) => r.website).slice(0, Number(args.limit));
     }
     for (const url of args.url || []) list.push({ id: 'cli', name: url, website: url });
@@ -202,11 +288,20 @@ async function run() {
   log(`${boxesByUser.size} users, ${areas.size} restaurant areas`);
   if (!areas.size) return;
 
-  const browser = await launchBrowser();
+  let todoAreas = [...areas.values()];
+  if (args.quick) {
+    const metas = await Promise.all(todoAreas.map((a) => db.doc(`rareas/${a.id}`).get()));
+    todoAreas = todoAreas.filter((_, i) => !metas[i].exists);
+    log(`quick: ${todoAreas.length} new areas`);
+    if (!todoAreas.length) return;
+  }
+  const notices = await fetchLcbOpenings(log);
+  const today = new Date().toISOString().slice(0, 10);
+  let browser = null;
   const visited = new Map(); // restaurant id -> site fields (shared across overlapping areas)
-  let budget = MENU_BUDGET;
+  let budget = args.quick ? 0 : MENU_BUDGET;
   try {
-    for (const area of areas.values()) {
+    for (const area of todoAreas) {
       const areaRef = db.doc(`rareas/${area.id}`);
       const meta = (await areaRef.get()).data() || {};
       const chunkDocs = await areaRef.collection('chunks').get();
@@ -229,6 +324,7 @@ async function run() {
         }
       }
 
+      osmList = withHistory(osmList, existing, notices.filter((n) => inBox(area, n)), { today, osmUpdated });
       const now = Date.now();
       let list = osmList.map((o) => combine(o, visited.get(o.id) || siteFields(existing.get(o.id))));
       const todo = list
@@ -236,6 +332,7 @@ async function run() {
         .sort((a, b) => (a.menuCheckedAt || 0) - (b.menuCheckedAt || 0))
         .slice(0, Math.max(0, budget));
       budget -= todo.length;
+      if (todo.length && !browser) browser = await launchBrowser();
       let read = 0;
       await pool(todo, CONCURRENCY, async (r) => {
         const site = await visit(browser, r);
@@ -259,16 +356,17 @@ async function run() {
           count: list.length,
           chunks: chunks.length,
           withMenu: list.filter((r) => r.m.length).length,
+          licensed: list.filter((r) => r.license).length,
           updatedAt: FieldValue.serverTimestamp(),
           ...(osmUpdated ? { lastOsmAt: FieldValue.serverTimestamp() } : {}),
         },
         { merge: true },
       );
       await batch.commit();
-      log(`  ${area.id}: ${list.length} restaurants, visited ${todo.length} sites (${read} menus read), ${chunks.length} chunks`);
+      log(`  ${area.id}: ${list.length} restaurants (${list.filter((r) => r.license).length} with license notices), visited ${todo.length} sites (${read} menus read), ${chunks.length} chunks`);
     }
   } finally {
-    await browser.close();
+    await browser?.close();
   }
 }
 
