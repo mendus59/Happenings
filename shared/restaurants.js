@@ -1,6 +1,6 @@
 // Restaurants: shared definitions for the daily restaurants job and the web app.
 // Places come from OpenStreetMap; menus and ordering links come from each restaurant's own site.
-import { areaFor, normalizeBox } from './geo.js';
+import { areaFor, distanceKm, normalizeBox } from './geo.js';
 
 /** The three ways to eat; each has its own map box and its own favorite / disliked rating. */
 export const MODES = {
@@ -88,7 +88,64 @@ export function restaurantFromElement(el) {
     delivery: yesNo(t.delivery),
     orderUrl: t['website:menu'] ? '' : t['contact:order'] || t['url:order'] || '',
     menuUrl: t['website:menu'] || t['menu:url'] || '',
+    // Opening date when mappers recorded one (YYYY, YYYY-MM or YYYY-MM-DD).
+    since: osmDate(t.start_date || t.opening_date),
   };
+}
+
+/** OSM date tag to YYYY / YYYY-MM / YYYY-MM-DD, or '' for vague values ("before 1990", "1990s"). */
+export function osmDate(v) {
+  const m = String(v || '').trim().replace(/^~/, '').match(/^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/);
+  if (!m || +m[1] < 1800 || +m[1] > 2100) return '';
+  return [m[1], m[2], m[3]].filter(Boolean).join('-');
+}
+
+// ---------- opening dates ----------
+
+const NAME_NOISE = new Set(['the', 'and', 'of', 'llc', 'inc', 'co', 'restaurant', 'bar', 'grill', 'cafe', 'café', 'kitchen', 'eatery', 'tavern', 'pub', 'company', 'corp', 'dba', 'at', 'on', 'wa']);
+const nameWords = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/['’]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !NAME_NOISE.has(w));
+
+/** Do two business names look like the same place? ("Bay Thai LLC" ~ "Bay Thai Restaurant") */
+export function sameName(a, b) {
+  const x = nameWords(a);
+  const y = nameWords(b);
+  if (!x.length || !y.length) return false;
+  const ys = new Set(y);
+  const shared = x.filter((w) => ys.has(w)).length;
+  return shared / Math.min(x.length, y.length) >= 0.6 || x.join('') === y.join('');
+}
+
+/** The restaurant a liquor-license notice belongs to: similar name, within about 250 m. */
+export function matchLicense(list, notice) {
+  let best = null;
+  for (const r of list) {
+    if (String(r.id).startsWith('r_lcb_')) continue;
+    const d = distanceKm(r, notice);
+    if (d <= 0.25 && sameName(r.name, notice.name) && (!best || d < best.d)) best = { r, d };
+  }
+  return best?.r || null;
+}
+
+/** Restaurant id for a place known only from a license notice (not on the map yet). */
+export const licenseRestaurantId = (notice) => `r_lcb_${String(notice.license || '').replace(/\D/g, '').slice(0, 15)}`;
+
+/**
+ * When a restaurant opened, best source first: a liquor-license notice, then the map's own
+ * start date, then the day it first appeared on the map. Returns { date, src } or null.
+ */
+export function openedOf(r) {
+  if (r.license?.date) return { date: r.license.date, src: 'license' };
+  if (r.since) return { date: r.since, src: 'map' };
+  if (r.firstSeen) return { date: r.firstSeen, src: 'seen' };
+  return null;
 }
 
 /** Rough price level 1–4 from menu prices (median of mains-ish items), or 0 when unknown. */

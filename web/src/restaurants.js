@@ -2,7 +2,7 @@
 // their own websites, per-mode favorite / disliked ratings, ordering links, filters, and new or
 // closing restaurants. Restaurant lists come from the daily job (see scraper/src/restaurants).
 import L from 'leaflet';
-import { MODES, MODE_IDS, restaurantQuery, restaurantFromElement, deliverySearchLinks, priceLabel } from '../../shared/restaurants.js';
+import { MODES, MODE_IDS, restaurantQuery, restaurantFromElement, deliverySearchLinks, priceLabel, openedOf } from '../../shared/restaurants.js';
 import { fetchOverpass, PLACE_KINDS, RESTAURANT_KINDS } from '../../shared/places.js';
 import { boxAround, boxCenter, distanceKm, inBox, normalizeBox, profileBox, areaFor } from '../../shared/geo.js';
 import { createBoxEditor, toBounds, sizeText } from './boxEditor.js';
@@ -20,6 +20,7 @@ const RATING_FILTERS = [
 ];
 const SORTS = [
   ['name', 'Name'],
+  ['new', 'Newest first (date opened)'],
   ['fav', 'Favorites first'],
   ['price', 'Price: low to high'],
   ['near', 'Nearest to the middle of the area'],
@@ -171,6 +172,8 @@ function filtered(ctx, list) {
     fav: (a, b) => favCount(b.r) - favCount(a.r) || byName(a, b),
     price: (a, b) => (a.r.price || 9) - (b.r.price || 9) || byName(a, b),
     near: (a, b) => distanceKm(mid, a.r) - distanceKm(mid, b.r),
+    // Newest opening first; places with no known date after, by name.
+    new: (a, b) => String(openedOf(b.r)?.date || '').localeCompare(String(openedOf(a.r)?.date || '')) || byName(a, b),
   };
   // Search results with matching dishes first.
   out.sort((a, b) => (tokens.length ? (b.dishes.length ? 1 : 0) - (a.dishes.length ? 1 : 0) : 0) || (sorts[f.sort] || byName)(a, b));
@@ -399,17 +402,49 @@ function linksHtml(r) {
     ${search.length ? `<div class="ch-actions rs-search-apps"><span>Look for it on</span>${search.join('<span aria-hidden="true">·</span>')}</div>` : ''}`;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "2026-11-02" -> "Nov 2, 2026"; "2019-05" -> "May 2019"; "2015" -> "2015". */
+function fmtDate(d) {
+  const [y, m, day] = String(d).split('-');
+  if (!m) return y;
+  return day ? `${MONTHS[+m - 1]} ${+day}, ${y}` : `${MONTHS[+m - 1]} ${y}`;
+}
+
+/** Opening info line for a card, and whether it counts as new (last 4 months). */
+function openedHtml(r) {
+  const o = openedOf(r);
+  if (!o) return { html: '', fresh: false };
+  const days = (Date.now() - Date.parse(o.date.length === 4 ? `${o.date}-07-01` : o.date)) / 864e5;
+  const fresh = days <= 120;
+  const what =
+    o.src === 'license'
+      ? r.license.type === 'moved'
+        ? 'Moved here (license notice)'
+        : r.license.type === 'new-owner'
+          ? 'New owner (license notice)'
+          : 'New liquor license applied'
+      : o.src === 'seen'
+        ? 'First showed up on the map'
+        : 'Opened';
+  const title = o.src === 'license' ? r.license.detail : o.src === 'map' ? 'From the map’s recorded opening date' : 'The first day our nightly check found it on the map';
+  return { html: `<div class="sub rs-opened" title="${esc(title)}">📅 ${what} ${esc(fmtDate(o.date))}</div>`, fresh };
+}
+
 function cardHtml(state, { r, dishes }, boxes) {
   const ratings = state.rRatings.get(r.id) || {};
   const unrated = !MODE_IDS.some((m) => ratings[m]);
   const meta = [(r.cuisines || []).join(', '), priceLabel(r.price), r.address].filter(Boolean).map(esc).join(' · ');
+  const opened = openedHtml(r);
   return `<article class="rs-card ${unrated ? 'unrated' : ''}" data-id="${esc(r.id)}">
     <div class="rs-card-head">
       <h3>${esc(r.name)}</h3>
       ${unrated ? '<span class="pill new">Unrated</span>' : ''}
+      ${opened.fresh ? '<span class="pill open">New</span>' : ''}
+      ${r.fromLicense ? '<span class="pill soon" title="Known from a liquor-license notice; not on the map yet">Coming soon?</span>' : ''}
       ${r.closure ? '<span class="pill close" title="Their website mentions closing">Closing?</span>' : ''}
     </div>
     <div class="sub">${meta || esc(PLACE_KINDS[r.kind]?.label || 'Restaurant')}</div>
+    ${opened.html}
     ${dishes.length ? `<div class="rs-dishes">${dishes.map((d) => `<span>${esc(d.n)}${d.p != null ? ` <b>$${d.p.toFixed(d.p % 1 ? 2 : 0)}</b>` : ''}</span>`).join('')}</div>` : ''}
     <div class="rs-modes">${MODE_IDS.map((m) => modeRow(state, r, m, inBox(boxes[m], r))).join('')}</div>
     ${linksHtml(r)}

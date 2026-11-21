@@ -138,3 +138,48 @@ test('a one-column PDF with prices far right stays one column', async () => {
   assert.equal(lines[0], 'Wings $10');
   assert.equal(lines[1], 'Crispy, hot and served with ranch dressing');
 });
+
+test('opening dates: map start_date, license notices, first seen on the map', async () => {
+  const { withHistory } = await import('../src/restaurants/index.js');
+  const { osmDate, sameName, openedOf } = await import('../../shared/restaurants.js');
+  assert.equal(osmDate('2019-05'), '2019-05');
+  assert.equal(osmDate('~1998'), '1998');
+  assert.equal(osmDate('before 1990'), '');
+  assert.ok(sameName('Bay Thai LLC', 'Bay Thai Restaurant'));
+  assert.ok(sameName("Hall's Hill Cafe", 'Halls Hill'));
+  assert.ok(!sameName('Bay Thai', 'Bay Pizza Co'));
+
+  const thai = { id: 'r_node_1', name: 'Bay Thai', lat: 47.5406, lon: -122.6372, since: '' };
+  const taco = { id: 'r_node_2', name: 'Kitsap Taqueria', lat: 47.545, lon: -122.63, since: '2015' };
+  const notice = (license, name, lat, lon, date) => ({ license, name, lat, lon, date, licenseType: 'new', detail: 'Applied for a new liquor license: Beer/Wine Restaurant' });
+  const notices = [
+    notice('111', 'Bay Thai LLC', 47.5407, -122.6371, '2026-11-02'),
+    notice('222', 'Brand New Bistro', 47.55, -122.64, '2026-11-10'),
+  ];
+  // First run: no history yet, so nothing counts as "first seen".
+  let list = withHistory([thai, taco], new Map(), notices, { today: '2026-11-20', osmUpdated: true });
+  const byId = new Map(list.map((r) => [r.id, r]));
+  assert.equal(byId.get('r_node_1').license.date, '2026-11-02');
+  assert.equal(byId.get('r_node_2').license, undefined);
+  assert.equal(byId.get('r_node_2').firstSeen, undefined);
+  assert.equal(byId.get('r_lcb_222').name, 'Brand New Bistro');
+  assert.ok(byId.get('r_lcb_222').fromLicense);
+  assert.deepEqual(openedOf(byId.get('r_node_2')), { date: '2015', src: 'map' });
+
+  // Later run: the notices have left the feed, but the dates are kept. The bistro is now on
+  // the map, so its license date moves to the mapped restaurant; a new place gets firstSeen.
+  const bistro = { id: 'r_node_3', name: 'Brand New Bistro', lat: 47.5501, lon: -122.6401, since: '' };
+  const fresh = { id: 'r_node_4', name: 'Pho Corner', lat: 47.54, lon: -122.63, since: '' };
+  list = withHistory([thai, taco, bistro, fresh], byId, [], { today: '2026-12-01', osmUpdated: true });
+  const after = new Map(list.map((r) => [r.id, r]));
+  assert.equal(after.get('r_node_1').license.date, '2026-11-02');
+  assert.equal(after.get('r_node_3').license.date, '2026-11-10');
+  assert.equal(after.has('r_lcb_222'), false);
+  assert.equal(after.get('r_node_4').firstSeen, '2026-12-01');
+  assert.equal(after.get('r_node_3').firstSeen, '2026-12-01');
+  assert.deepEqual(openedOf(after.get('r_node_3')), { date: '2026-11-10', src: 'license' });
+
+  // License-only places are dropped after a year.
+  const old = new Map([['r_lcb_9', { id: 'r_lcb_9', name: 'Gone', lat: 47.5, lon: -122.6, license: { date: '2025-01-01' } }]]);
+  assert.equal(withHistory([], old, [], { today: '2026-11-20', osmUpdated: false }).length, 0);
+});

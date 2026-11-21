@@ -53,6 +53,12 @@ jobs:
       - name: Scrape due venues and sync to Firestore
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: node scraper/src/index.js ${{ inputs.force && '--force' || '' }}
+      # New restaurant areas get their list (from the map and liquor-license notices) within
+      # the hour instead of waiting for the nightly run; menus are still read nightly.
+      - name: Set up new restaurant areas
+        if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        continue-on-error: true
+        run: node scraper/src/restaurants/index.js --quick
 
       # GitHub pauses scheduled workflows in repos with no activity for 60 days.
       # Re-enabling it once a week keeps the sync running without commits.

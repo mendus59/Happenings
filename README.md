@@ -82,6 +82,8 @@ The **Restaurants** tab has its own three map areas (any shape, like the Nearby 
 Everything is free:
 
 - **Restaurant list**: OpenStreetMap, which also provides cuisine and, where mapped, whether a place offers takeout or delivery. Refreshed weekly by `.github/workflows/restaurants.yml`.
+- **Opening dates**: from Washington liquor-license notices (saved, since the state's feed only keeps recent ones), the map's own start date when mappers recorded one, or the day the nightly check first found the place on the map. Sort by **Newest first** to see them. Places that filed a license notice but aren't on the map yet are listed as "Coming soon?" for up to a year.
+- **New areas** get their restaurant list within the hour (from the hourly job); menus follow overnight.
 - **Menus**: read from each restaurant's **own website**, about once a month per restaurant. The job uses schema.org menu data, common menu widgets (Squarespace, BentoBox, Popmenu and similar), plain-text menus, and PDF menus. It can't read menus that are images. Prices come from these menus, so "$–$$$$" is an estimate.
 - **Ordering links**: DoorDash, Grubhub, Uber Eats, Toast, Square and other ordering links found on the restaurant's site. A link to a delivery app also marks the restaurant as offering delivery. The delivery apps have no free way to read their listings or menus, so for other restaurants the app shows "Look for it on DoorDash / Grubhub / Uber Eats" search links.
 - **New and closing restaurants**: the same daily license and map checks as Nearby, plus closing notices on a restaurant's own website.

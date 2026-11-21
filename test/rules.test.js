@@ -120,6 +120,7 @@ test('restaurant boxes and ratings are private and validated', async () => {
   await assertFails(setDoc(rating(bob), { dine: 'fav' }));
   await assertFails(setDoc(rating(alice), { dine: 'love' }));
   await assertFails(setDoc(doc(alice, 'users', 'alice', 'restaurantRatings', 'not-an-id'), { dine: 'fav' }));
+  await assertSucceeds(setDoc(doc(alice, 'users', 'alice', 'restaurantRatings', 'r_lcb_428751'), { takeout: 'fav', name: 'Brand New Bistro' }));
 });
 
 test('shared restaurant lists are readable when signed in, never writable', async () => {

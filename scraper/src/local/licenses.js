@@ -58,6 +58,8 @@ export function openingsFromLcbRows(rows) {
     const type = String(r.l_a_type).toUpperCase();
     out.push({
       id: `lcb_${r.license}_${(date || '').replace(/-/g, '')}`,
+      license: String(r.license || ''),
+      licenseType: /CHANGE OF LOCATION/.test(String(r.l_a_type).toUpperCase()) ? 'moved' : /ASSUMPTION/.test(String(r.l_a_type).toUpperCase()) ? 'new-owner' : 'new',
       change: 'opening',
       source: 'license',
       name: titleCase(r.tradename || r.licenseename),
