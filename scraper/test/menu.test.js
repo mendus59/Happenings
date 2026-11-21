@@ -183,3 +183,42 @@ test('opening dates: map start_date, license notices, first seen on the map', as
   const old = new Map([['r_lcb_9', { id: 'r_lcb_9', name: 'Gone', lat: 47.5, lon: -122.6, license: { date: '2025-01-01' } }]]);
   assert.equal(withHistory([], old, [], { today: '2026-11-20', osmUpdated: false }).length, 0);
 });
+
+test('state licensee list: rows to licenses, geocoder answers, opening notices', async () => {
+  const { licenseesFromRows, noticeFromLicensee, onPremiseUrlFrom } = await import('../src/local/lcbList.js');
+  const { parseBatch, addressKey } = await import('../src/local/geocode.js');
+  const head = ['Tradename', 'License Number', 'ID Number', 'Loc Address', 'Loc Room', 'Loc City', 'Loc St', 'Loc Zip', 'Phone', 'Mail Address', 'Mail City', 'Mail State', 'Mail Zip', 'Business Startup Date', 'Issue Date', 'Expire Date', 'Privilege', 'Application Date', 'Reason Description', 'County', 'Status', 'Night Phone', 'Licensee', 'Temporary License'];
+  const row = (name, lic, addr, city, priv, applied, reason, status, issued = '20260912') => [name, lic, '', addr, '', city, 'WA', '983666401', '', '', '', '', '', '20260722', issued, '20270930', priv, applied, reason, 'KITSAP', status, '', '', ''];
+  const rows = [
+    head,
+    row("MOONBEEM'S THAI'SH CAFE                       ", '453605', '1386 SE LUND AVE STE 110       ', 'PORT ORCHARD             ', 'SPIRITS/BR/WN REST LOUNGE +', '20260806', 'ASSUMPTION', 'ACTIVE (ISSUED)'),
+    row('EL PUEBLITO', '082120', '1948 SE LUND AVE STE 102', 'PORT ORCHARD', 'SPIRITS/BR/WN REST LOUNGE +', '20261008', 'RENEWAL', 'ACTIVE (ISSUED)'),
+    row('028 BARBER SHOP', '426995', '1 MAIN ST', 'PORT ORCHARD', 'SNACK BAR', '20260331', 'RENEWAL', 'ACTIVE (ISSUED)'),
+    row('OLD PLACE', '111', '2 MAIN ST', 'PORT ORCHARD', 'BEER/WINE REST - BEER/WINE', '20250101', 'RENEWAL', 'EXPIRED'),
+    row('NEW SPOT', '222', '3 BAY ST', 'PORT ORCHARD', 'BEER/WINE REST - BEER/WINE', '20261101', 'NEW APPLICATION', 'PENDING (NON-ISSUED)', ''),
+  ];
+  const list = licenseesFromRows(rows);
+  assert.deepEqual(list.map((l) => l.license), ['453605', '082120', '222']);
+  const moon = list[0];
+  assert.equal(moon.name, "Moonbeem's Thai'sh Cafe");
+  assert.equal(moon.zip, '98366');
+  const n = noticeFromLicensee(moon, 47.52, -122.61);
+  assert.equal(n.date, '2026-08-06');
+  assert.equal(n.licenseType, 'new-owner');
+  assert.equal(n.kind, 'restaurant');
+  assert.match(n.detail, /issued 2026-09-12/);
+  assert.equal(noticeFromLicensee(list[1], 47.5, -122.6).date, '', 'renewals carry no opening date');
+  assert.equal(noticeFromLicensee(list[2], 47.5, -122.6).status, 'pending');
+  assert.equal(
+    onPremiseUrlFrom('<a href="/sites/default/files/2026-11/Off%20Premise11172026.xlsx">x</a><a href="https://lcb.wa.gov/sites/default/files/2026-11/On%20Premise11172026.xlsx">y</a>'),
+    'https://lcb.wa.gov/sites/default/files/2026-11/On%20Premise11172026.xlsx',
+  );
+  const parsed = parseBatch('"0","1386 SE LUND AVE, PORT ORCHARD, WA, 98366","Match","Exact","1386 SE LUND AVE, PORT ORCHARD, WA, 98366","-122.6146,47.5203","123","L"\n"1","3 BAY ST, PORT ORCHARD, WA, 98366","No_Match"');
+  assert.deepEqual(parsed, { 0: { lat: 47.5203, lon: -122.6146 }, 1: null });
+  assert.equal(addressKey(moon), '1386 SE LUND AVE STE 110|PORT ORCHARD|98366');
+
+  // Undated licensed restaurant not on the map becomes an entry; a bar does not.
+  const { withHistory } = await import('../src/restaurants/index.js');
+  const out = withHistory([], new Map(), [n, { ...noticeFromLicensee(list[1], 47.53, -122.61) }, { ...n, license: '9', name: 'Some Bar', kind: 'bar' }], { today: '2026-11-21', osmUpdated: true });
+  assert.deepEqual(out.map((r) => [r.id, r.license?.date || '', r.licStatus]), [['r_lcb_453605', '2026-08-06', 'active'], ['r_lcb_082120', '', 'active']]);
+});

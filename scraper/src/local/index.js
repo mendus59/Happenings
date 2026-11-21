@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { areaFor, inBox, profileBox } from '../../../shared/geo.js';
 import { areasForBoxes, MODE_IDS } from '../../../shared/restaurants.js';
 import { fetchLcbOpenings } from './licenses.js';
+import { fetchLicensedPlaces } from './lcbList.js';
 import { fetchOsmPlaces, diffOsm, snapshotOf } from './osm.js';
 
 const OSM_EVERY_DAYS = Number(process.env.OSM_EVERY_DAYS || 28);
@@ -15,6 +16,7 @@ const { values: args } = parseArgs({
   options: {
     'dry-run': { type: 'boolean', default: false },
     box: { type: 'string' },
+    county: { type: 'string' }, // dry run: which county's licensees to geocode
   },
 });
 const log = (...a) => console.log(...a);
@@ -29,6 +31,10 @@ async function dryRun() {
   const lcb = (await fetchLcbOpenings(log)).filter((o) => within(area, o));
   log(`\nLicense notices nearby: ${lcb.length}`);
   for (const o of lcb) log(` - ${o.date} ${o.name} (${o.address}) — ${o.detail}`);
+  const listed = (await fetchLicensedPlaces(null, log, { only: (l) => l.county === (args.county || 'KITSAP').toUpperCase() })).filter((o) => within(area, o));
+  log(`\nLicensed food & drink places in the area (state list): ${listed.length}`);
+  for (const o of listed.filter((x) => x.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 25)) log(` - ${o.date} ${o.name} (${o.address}) [${o.status}] ${o.detail}`);
+  for (const o of listed.filter((x) => /moonbeem/i.test(x.name))) log(` * ${JSON.stringify(o)}`);
   const places = await fetchOsmPlaces(area);
   log(`\nFood & drink places on the map nearby: ${places.length}`);
   for (const p of places.slice(0, 10)) log(` - ${p.name} [${p.kind}] ${p.website || ''}`);
@@ -55,6 +61,26 @@ async function run() {
   if (!areas.size) return;
 
   const lcb = await fetchLcbOpenings(log);
+  // Openings from the state's full licensee list (dated within 4 months), skipping licenses the
+  // notice feed already reported.
+  const seen = new Set(lcb.map((o) => o.license));
+  const cutoff = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+  for (const n of await fetchLicensedPlaces(db, log)) {
+    if (!n.date || n.date < cutoff || seen.has(n.license)) continue;
+    lcb.push({
+      id: `lcbl_${n.license}_${n.date.replace(/-/g, '')}`,
+      change: 'opening',
+      source: 'license-list',
+      name: n.name,
+      kind: n.kind,
+      lat: n.lat,
+      lon: n.lon,
+      address: n.address,
+      detail: n.detail,
+      date: n.date,
+      website: '',
+    });
+  }
   for (const area of areas.values()) {
     const areaRef = db.doc(`areas/${area.id}`);
     const snap = await areaRef.get();
