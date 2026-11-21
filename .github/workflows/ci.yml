@@ -43,6 +43,8 @@ jobs:
           node scraper/src/index.js --dry-run --out scrape-report.json
           --url https://www.finnriver.com/farm-music-event-calendar
           --url https://www.mushroom-wonderland.com/
+      - name: Diagnostic lookup (temporary)
+        run: pip install openpyxl >/dev/null && python3 scraper/diag.py
       - name: Dry-run nearby openings check (Kitsap / Port Orchard area)
         run: node scraper/src/local/index.js --dry-run --box 47.40,-122.80,47.80,-122.45
       - name: Dry-run restaurant menus (downtown Port Orchard, plus two known sites)
