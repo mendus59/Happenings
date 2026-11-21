@@ -18,6 +18,11 @@ service cloud.firestore {
 
     // Either no box at all, or all four edges forming a sane rectangle no bigger than
     // 1.0° tall by 1.5° wide (matches MAX_BOX in shared/geo.js, plus rounding slack).
+    // Optional shape corners as a flat list [lat, lon, lat, lon, ...]: 3 to 16 corners.
+    function validPts(v) {
+      return v is list && v.size() >= 6 && v.size() <= 32 && v.size() % 2 == 0;
+    }
+
     function validBox(d) {
       return (!('boxS' in d) && !('boxW' in d) && !('boxN' in d) && !('boxE' in d))
         || (d.boxS is number && d.boxW is number && d.boxN is number && d.boxE is number
@@ -57,10 +62,11 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      // Profile: home area as a map rectangle (edges rounded to ~1 km) and preferences.
+      // Profile: home area as a map shape (bounding box plus corners, rounded to ~1 km) and preferences.
       allow read, delete: if isOwner(uid);
       allow create, update: if isOwner(uid)
-        && request.resource.data.keys().hasOnly(['homeLabel', 'boxS', 'boxW', 'boxN', 'boxE', 'suggestions', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['homeLabel', 'boxS', 'boxW', 'boxN', 'boxE', 'boxPts', 'suggestions', 'updatedAt'])
+        && (!('boxPts' in request.resource.data) || (validPts(request.resource.data.boxPts) && 'boxS' in request.resource.data))
         && (!('homeLabel' in request.resource.data) || (request.resource.data.homeLabel is string && request.resource.data.homeLabel.size() <= 120))
         && validBox(request.resource.data)
         && (!('suggestions' in request.resource.data) || request.resource.data.suggestions is bool);
@@ -79,12 +85,13 @@ service cloud.firestore {
           && (!('scanRequestedAt' in request.resource.data) || isTimestampOrServerTime(request.resource.data.scanRequestedAt));
       }
 
-      // Restaurant boxes: one per way of eating. Doc id = dine | takeout | delivery.
+      // Restaurant areas (bounding box plus optional corners): one per way of eating. Doc id = dine | takeout | delivery.
       match /restaurantAreas/{mode} {
         allow read, delete: if isOwner(uid);
         allow create, update: if isOwner(uid)
           && mode in ['dine', 'takeout', 'delivery']
-          && request.resource.data.keys().hasOnly(['s', 'w', 'n', 'e', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['s', 'w', 'n', 'e', 'pts', 'updatedAt'])
+          && (!('pts' in request.resource.data) || validPts(request.resource.data.pts))
           && request.resource.data.keys().hasAll(['s', 'w', 'n', 'e'])
           && validBox({
             'boxS': request.resource.data.s, 'boxW': request.resource.data.w,

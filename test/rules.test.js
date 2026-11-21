@@ -85,6 +85,11 @@ test('profiles are private and validated', async () => {
   await assertFails(setDoc(doc(alice, 'users', 'alice'), { homeLabel: 'x', boxS: 47.4 })); // partial box
   await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, homeLat: 47.5 })); // exact points not stored
   await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, admin: true }));
+  const pts = [47.4, -122.8, 47.8, -122.8, 47.6, -122.45];
+  await assertSucceeds(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxPts: pts }));
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxPts: pts.slice(0, 4) })); // fewer than 3 corners
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxPts: [...pts, 47.5] })); // odd length
+  await assertFails(setDoc(doc(alice, 'users', 'alice'), { ...ok, boxPts: new Array(34).fill(47.5) })); // too many corners
 });
 
 test('area changes are readable when signed in, never writable', async () => {
@@ -106,6 +111,8 @@ test('restaurant boxes and ratings are private and validated', async () => {
   await assertFails(setDoc(area(alice, 'dine'), { ...box, n: 49.5 }));
   await assertFails(setDoc(area(alice, 'dine'), { s: 47.5, w: -122.7 }));
   await assertFails(setDoc(area(alice, 'dine'), { ...box, extra: 1 }));
+  await assertSucceeds(setDoc(area(alice, 'dine'), { ...box, pts: [47.5, -122.7, 47.58, -122.7, 47.55, -122.58] }));
+  await assertFails(setDoc(area(alice, 'dine'), { ...box, pts: 'square' }));
   const rating = (db) => doc(db, 'users', 'alice', 'restaurantRatings', 'r_node_42');
   await assertSucceeds(setDoc(rating(alice), { dine: 'fav', delivery: 'dislike', name: 'Thai Place', updatedAt: serverTimestamp() }));
   await assertSucceeds(getDocs(collection(alice, 'users', 'alice', 'restaurantRatings')));

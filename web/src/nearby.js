@@ -129,9 +129,10 @@ function renderArea({ state }) {
       <div class="nb-area-form editing">
         <div class="nb-area-title">
           <h2>Draw your area</h2>
-          <p class="hint">Drag the corners of the green box (or the ✥ in the middle to move it) so it covers the places you actually go.
+          <p class="hint">Drag the corners of the green area so it covers the places you actually go. Drag a small dot on an edge
+            to add a corner, double-click (or long-press) a corner to remove it, and drag the ✥ to move the whole area.
             Leave out spots that look close but take a long time to reach, like the other side of the water.
-            Only the box is saved, never your address.</p>
+            Only the shape is saved, never your address.</p>
         </div>
         ${findForm('Jump to a town', 'Go')}
         <div class="filter-row">
@@ -149,7 +150,7 @@ function renderArea({ state }) {
       <div class="nb-area-form">
         <div class="nb-area-title">
           <h2>Set your home area</h2>
-          <p class="hint">Find your town, then draw a box on the map around the places you’d travel to. You’ll see local places to track,
+          <p class="hint">Find your town, then draw an area on the map around the places you’d travel to. You’ll see local places to track,
             new openings and closings, and (if you like) suggestions.</p>
         </div>
         ${findForm('Your town, e.g. “Port Orchard, WA”', 'Find')}
