@@ -1,5 +1,19 @@
 # Happenings
 
+<!-- site-summary:start -->
+<!-- This section is this project's card on https://mendus59.github.io and is copied there daily.
+     Keep it true of what's on main: one plain-text summary line (max 160 characters), then 1-6 short bullets.
+     See CLAUDE.md ("Site summary"). -->
+One calendar for the events at the small businesses and venues you love.
+
+- Save any venue's events page and Happenings checks it every few hours, gathering everything into one list and calendar.
+- New events stay highlighted until you mark them Interested, Favorite or Hide, and are sorted into types like Live Music, Comedy and Markets.
+- Events you planned on that change or vanish from the venue's page are flagged, so you know a plan changed.
+- Draw your own area on a map to find places nearby, new Washington openings from liquor-license notices, and closings.
+- A Restaurants tab with separate dine-in, takeout and delivery areas, favorites and dislikes for each, and search across menu dishes.
+- Sign in with Google or email; it all runs on free tiers of GitHub Pages, GitHub Actions and Firebase.
+<!-- site-summary:end -->
+
 One calendar for the events at the small businesses and venues you love.
 
 Save the events page of any venue (a cidery's music calendar, a foraging guide's tour
