@@ -348,3 +348,10 @@ button.link.muted { color: var(--muted); }
   .nb-grid { grid-template-columns: minmax(0, 1fr); }
   #nb-map { height: 55vh; }
 }
+
+/* Demo mode */
+.demo-cta { display: grid; justify-items: center; gap: 8px; margin: 0 0 20px; }
+.demo-cta span { color: var(--muted); font-size: 14px; }
+button.primary.big { font-size: 17px; padding: 12px 28px; }
+button.primary.small { padding: 5px 12px; font-size: 14px; }
+.demo-banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
