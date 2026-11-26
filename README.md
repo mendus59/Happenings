@@ -14,6 +14,9 @@ One calendar for the events at the small businesses and venues you love.
 - Sign in with Google or email; it all runs on free tiers of GitHub Pages, GitHub Actions and Firebase.
 <!-- site-summary:end -->
 
+<!-- site-screenshot: docs/screenshot.jpg -->
+![Screenshot of Happenings](docs/screenshot.jpg)
+
 One calendar for the events at the small businesses and venues you love.
 
 Save the events page of any venue (a cidery's music calendar, a foraging guide's tour
