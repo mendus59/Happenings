@@ -11,7 +11,7 @@ One calendar for the events at the small businesses and venues you love.
 - Events you planned on that change or vanish from the venue's page are flagged, so you know a plan changed.
 - Draw your own area on a map to find places nearby, new Washington openings from liquor-license notices, and closings.
 - A Restaurants tab with separate dine-in, takeout and delivery areas, favorites and dislikes for each, and search across menu dishes.
-- Sign in with Google or email; it all runs on free tiers of GitHub Pages, GitHub Actions and Firebase.
+- Try a demo with sample venues and events without an account, or sign in with Google or email to follow your own.
 <!-- site-summary:end -->
 
 <!-- site-screenshot: docs/screenshot.jpg -->

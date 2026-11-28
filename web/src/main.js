@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { auth } from './firebase.js';
 import { createStore } from './store.js';
+import { createDemoStore } from './demoStore.js';
 import { renderNearby, leaveNearby, handleNearbyAction, handleNearbySubmit, handleNearbyChange } from './nearby.js';
 import { renderRestaurants, leaveRestaurants, handleRestaurantAction, handleRestaurantSubmit, handleRestaurantChange, handleRestaurantInput } from './restaurants.js';
 import { CATEGORY_INFO, categoryInfo } from '../../shared/categories.js';
@@ -50,6 +51,26 @@ const ui = {
 let store = null;
 let user = null;
 let openEventKey = null;
+let demo = false; // true while a signed-out visitor is trying the demo
+
+function startDemo() {
+  store?.stop();
+  demo = true;
+  user = { displayName: 'Demo', demo: true };
+  store = createDemoStore(() => {
+    render();
+    renderDialog();
+  });
+  // Nearby and Restaurants need the visitor's own area, so start on the events.
+  if (!['list', 'calendar', 'venues'].includes(ui.view)) ui.view = 'list';
+}
+
+function leaveDemo() {
+  demo = false;
+  store = null;
+  user = null;
+  if (location.hash === '#demo') history.replaceState(null, '', location.pathname + location.search);
+}
 
 // ---------- derived data ----------
 
@@ -145,7 +166,9 @@ function render() {
         }</button>`,
     )
     .join('');
-  $user.innerHTML = `<span class="who">${esc(user.displayName || user.email || '')}</span><button class="link" data-action="signout">Sign out</button>`;
+  $user.innerHTML = demo
+    ? `<span class="who">Demo</span><button class="primary small" data-action="exit-demo">Sign in</button>`
+    : `<span class="who">${esc(user.displayName || user.email || '')}</span><button class="link" data-action="signout">Sign out</button>`;
 
   if (state.error) {
     $app.innerHTML = `<div class="notice error">Something went wrong loading your data: ${esc(state.error)}</div>`;
@@ -155,11 +178,22 @@ function render() {
     $app.innerHTML = `<div class="empty">Loading…</div>`;
     return;
   }
+  if (demo && (ui.view === 'nearby' || ui.view === 'restaurants')) return renderDemoLocked();
   if (ui.view === 'nearby') return renderNearby({ state, store, $app, rerender: render });
   if (ui.view === 'restaurants') return renderRestaurants({ state, store, $app, rerender: render });
   if (ui.view === 'venues' || state.subscriptions.size === 0) return renderVenues(state);
   if (ui.view === 'calendar') return renderCalendar(state, events);
   return renderList(state, events, toReview);
+}
+
+const DEMO_BANNER = `<div class="notice demo-banner"><span><b>You're trying the demo</b> with made-up venues and events. Sign in to follow the event pages of places near you.</span><button class="primary" data-action="exit-demo">Sign in</button></div>`;
+
+function renderDemoLocked() {
+  const what =
+    ui.view === 'nearby'
+      ? 'Nearby lets you draw your own area on a map to find places around you, plus new openings and closings there.'
+      : 'Restaurants lets you set dine-in, takeout and delivery areas, mark favorites, and search menus near you.';
+  $app.innerHTML = `${DEMO_BANNER}<div class="empty">${what}<br>It works from your own area, so it needs an account.</div>`;
 }
 
 function filterBar(state, events) {
@@ -271,7 +305,7 @@ function renderList(state, events, toReview) {
     toReview && ui.status !== 'review'
       ? `<div class="notice review-banner"><span><b>${toReview}</b> new event${toReview === 1 ? '' : 's'} to review.</span><button class="primary" data-action="status" data-status="review">Review now</button></div>`
       : '';
-  $app.innerHTML = `${banner}${filterBar(state, events)}<div class="list">${body}</div>`;
+  $app.innerHTML = `${demo ? DEMO_BANNER : ''}${banner}${filterBar(state, events)}<div class="list">${body}</div>`;
 }
 
 function renderCalendar(state, events) {
@@ -316,7 +350,7 @@ function renderCalendar(state, events) {
     </div>`;
   }
   const title = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(m);
-  $app.innerHTML = `${filterBar(state, events)}
+  $app.innerHTML = `${demo ? DEMO_BANNER : ''}${filterBar(state, events)}
     <div class="cal-head">
       <button data-action="month" data-delta="-1" aria-label="Previous month">‹</button>
       <h2>${esc(title)}</h2>
@@ -345,7 +379,7 @@ function venueStatus(venue) {
 
 function renderVenues(state) {
   const subs = [...state.subscriptions.values()].sort((a, b) => venueLabel(state, a.id).localeCompare(venueLabel(state, b.id)));
-  $app.innerHTML = `
+  $app.innerHTML = `${demo ? DEMO_BANNER : ''}
     <section class="venues">
       <h2>Your venues</h2>
       <p class="hint">Add the events or calendar page of any business or venue. Happenings checks it every few hours and adds new events to your calendar.</p>
@@ -419,6 +453,10 @@ function renderAuth() {
     <section class="auth">
       <h1>Never miss what's happening nearby.</h1>
       <p>Save the event pages of the local businesses and venues you love. Happenings gathers all their events into one calendar and tells you what's new.</p>
+      <div class="demo-cta">
+        <button class="primary big" data-action="demo">Try the demo</button>
+        <span>No account needed. Look around with sample venues and events.</span>
+      </div>
       <div class="auth-box">
         <button class="google" data-action="google">Continue with Google</button>
         <div class="or"><span>or</span></div>
@@ -522,6 +560,13 @@ document.addEventListener('click', async (e) => {
           await store.removeVenue(el.dataset.id);
         }
         return;
+      case 'demo':
+        startDemo();
+        history.replaceState(null, '', '#demo');
+        break;
+      case 'exit-demo':
+        leaveDemo();
+        break;
       case 'signout':
         await signOut(auth);
         return;
@@ -635,6 +680,9 @@ $dialog.addEventListener('click', (e) => {
 setInterval(() => user && !$dialog.open && render(), 5 * 60 * 1000);
 
 onAuthStateChanged(auth, (u) => {
+  // Stay in the demo until the visitor signs in or leaves it.
+  if (!u && demo) return;
+  if (u) demo = false;
   store?.stop();
   store = null;
   user = u;
@@ -646,3 +694,9 @@ onAuthStateChanged(auth, (u) => {
   }
   render();
 });
+
+// Links to #demo (for example from the project's showcase card) open the demo directly.
+if (location.hash === '#demo') {
+  startDemo();
+  render();
+}
